@@ -1,0 +1,106 @@
+{
+  "GR-01": {
+    "pass": true,
+    "detail": "room WV98K"
+  },
+  "SL-02": {
+    "pass": true,
+    "detail": "prompt \"Join Naming Game\", guest in lobby"
+  },
+  "GR-02": {
+    "pass": true,
+    "detail": "end game host=1 guest=0"
+  },
+  "SL-03": {
+    "pass": true,
+    "detail": "clipboard=http://localhost:3456/r/WV98K share=http://localhost:3456/r/WV98K"
+  },
+  "SL-04": {
+    "pass": true,
+    "detail": "decoded http://localhost:3456/r/WV98K"
+  },
+  "GR-03": {
+    "pass": true,
+    "detail": "public listed=True, private listed=False"
+  },
+  "GR-04": {
+    "pass": true,
+    "detail": "defaults pick/review/challenge ['20', '30', '30']; 75s rejected"
+  },
+  "GR-06": {
+    "pass": true,
+    "detail": "started with defaults in one click"
+  },
+  "GR-05": {
+    "pass": true,
+    "detail": "all in-game settings inputs disabled for host"
+  },
+  "SL-06": {
+    "pass": true,
+    "detail": "in-progress and closed links explain why, with Create room"
+  },
+  "SL-05": {
+    "pass": true,
+    "detail": "old link stops working after the room closes"
+  },
+  "JG-06": {
+    "pass": true,
+    "detail": "reload rejoined the same seat"
+  },
+  "GP-05": {
+    "pass": true,
+    "detail": "both see ['V', 'V']"
+  },
+  "PR-05": {
+    "pass": true,
+    "detail": "value \"Very Vanilla Ice \", hint \"3 words max.\""
+  },
+  "PR-06": {
+    "pass": true,
+    "detail": "hint \"Doesn't start with V\""
+  },
+  "RV-08": {
+    "pass": true,
+    "detail": "host sees 1, guest sees 0"
+  },
+  "RV-10": {
+    "pass": true,
+    "detail": "challenge upheld by group vote in the UI"
+  },
+  "GP-08": {
+    "pass": true,
+    "detail": "leaderboard dialog lists both players"
+  },
+  "GP-07": {
+    "pass": true,
+    "detail": "leaderboard shown before next pick"
+  },
+  "GP-03": {
+    "pass": true,
+    "detail": "V greyed out for both: [True, True]"
+  },
+  "GP-02": {
+    "pass": true,
+    "detail": "second pick goes to the second player"
+  },
+  "WN-01": {
+    "pass": true,
+    "detail": "Joint winners: Ste and Ade"
+  },
+  "GP-11": {
+    "pass": true,
+    "detail": "message shown; scores [0, 0]; used letters 0"
+  },
+  "MS-05": {
+    "pass": true,
+    "detail": "alerts: sound on 3, muted 0"
+  },
+  "MS-02": {
+    "pass": true,
+    "detail": "scrollWidth per screen: {'home': 375, 'lobby': 375, 'picking': 375, 'answering': 375, 'voting': 375, 'results': 375, 'round-scores': 375, 'final': 375}"
+  },
+  "MS-06": {
+    "pass": true,
+    "detail": "axe: no serious/critical issues; keyboard create, pick and vote worked"
+  }
+}

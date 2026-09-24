@@ -1,0 +1,24 @@
+{
+  "name": "naming-game",
+  "version": "1.0.0",
+  "description": "Name, Food, Animal, Place, Thing: a real-time multiplayer naming game",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/engine.test.js test/server.test.js",
+    "test:e2e": "./test/run-e2e.sh"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^5.1.0",
+    "obscenity": "^0.4.3",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "axe-core": "^4.10.3",
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0",
+    "socket.io-client": "^4.8.1"
+  }
+}

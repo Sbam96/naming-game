@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Naming Game</title>
+  <meta name="description" content="Name, Food, Animal, Place, Thing: the pen-and-paper game, online with friends.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='5' fill='%23FFE45C' stroke='%2317233F' stroke-width='3'/><text x='16' y='23' font-size='18' text-anchor='middle' font-family='Arial Black' fill='%2317233F'>N</text></svg>">
+</head>
+<body>
+  <a class="skip" href="#app">Skip to game</a>
+  <header class="bar" id="bar">
+    <a class="wordmark" href="/" aria-label="Naming Game home">Naming Game</a>
+    <div class="bar-tools">
+      <span class="room-chip" id="roomChip" hidden></span>
+      <button class="btn ghost small" id="boardBtn" data-action="open-board" hidden>Leaderboard</button>
+      <button class="btn ghost small" id="muteBtn" data-action="toggle-mute" aria-pressed="false">Sound on</button>
+    </div>
+  </header>
+  <main id="app" tabindex="-1" aria-live="off"></main>
+  <div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
+  <div class="toast" id="toast" role="status" aria-live="assertive" hidden></div>
+
+  <dialog id="boardDialog" aria-labelledby="boardTitle">
+    <h2 id="boardTitle">Leaderboard</h2>
+    <div id="boardBody"></div>
+    <form method="dialog"><button class="btn">Close</button></form>
+  </dialog>
+
+  <dialog id="qrDialog" aria-labelledby="qrTitle">
+    <h2 id="qrTitle">Scan to join</h2>
+    <img id="qrImg" alt="QR code for the room link" width="240" height="240">
+    <p class="muted" id="qrLink"></p>
+    <form method="dialog"><button class="btn">Close</button></form>
+  </dialog>
+
+  <dialog id="restartDialog" aria-labelledby="restartTitle">
+    <h2 id="restartTitle">Restart the game?</h2>
+    <p id="restartMsg">This game won't be as competitive: answers from the last run will still be fresh in everyone's mind. Scores reset to 0 and everyone gets 4 challenges.</p>
+    <div class="row">
+      <button class="btn" data-action="restart-confirm">Restart game</button>
+      <button class="btn ghost" data-action="restart-cancel">Cancel</button>
+    </div>
+  </dialog>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
