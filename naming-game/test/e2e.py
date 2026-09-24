@@ -53,9 +53,10 @@ async def phase(page):
 
 
 async def wait_phase(page, want, timeout=10):
+    wants = want if isinstance(want, (tuple, list)) else (want,)
     end = time.time() + timeout
     while time.time() < end:
-        if await phase(page) == want:
+        if await phase(page) in wants:
             await page.wait_for_timeout(80)
             return
         await page.wait_for_timeout(50)
@@ -99,10 +100,11 @@ async def play_round(pages, letter, answers, reject=(), skip_to='picking'):
         await wait_phase(p, 'voting')
     for p in pages:
         await vote_all(p, reject)
-    await wait_phase(pages[0], 'challenge')
+    await wait_phase(pages[0], ('challenge', 'results'))
     if skip_to == 'challenge':
         return
-    await hook(pages[0], 'deadlineIn', ms=0)
+    if await phase(pages[0]) == 'challenge':
+        await hook(pages[0], 'deadlineIn', ms=0)
     await wait_phase(pages[0], 'results')
     if skip_to == 'results':
         return
@@ -378,7 +380,7 @@ async def mobile_and_a11y(browser):
         await host.keyboard.press('Space')
     await host.locator('button:has-text("Submit votes")').focus()
     await host.keyboard.press('Enter')
-    await vote_all(guest)
+    await vote_all(guest, reject=('Mivian',))
     await wait_phase(host, 'challenge')
     await check('results', host)
     await hook(host, 'deadlineIn', ms=0)
@@ -396,6 +398,59 @@ async def mobile_and_a11y(browser):
         await p.context.close()
 
 
+async def blank_player_round(browser):
+    ste = await player(browser)
+    ade = await player(browser)
+    code = await create_room(ste, 'Ste')
+    await join_link(ade, code, 'Ade')
+    await ste.click('#startBtn')
+    await wait_phase(ste, 'picking')
+    pk = await picker_of([ste, ade])
+    await pk.click('.alphabet button[data-letter="B"]')
+    for p in (ste, ade):
+        await wait_phase(p, 'answering')
+    await fill_answers(ade, {'name': 'Bob', 'food': 'Bread', 'animal': 'Bear', 'place': 'Berlin', 'thing': 'Ball'})
+    await ste.click("button:has-text(\"I'm done\")")
+    await ade.click("button:has-text(\"I'm done\")")
+    await wait_phase(ste, 'voting')
+    ste_has_votes = await ste.locator('.thumb.up').count()
+    ade_text = await ade.locator('main').inner_text()
+    explains = "didn't write any answers" in ade_text and 'Waiting for the other players' in ade_text
+    await vote_all(ste)
+    await wait_phase(ade, 'results')
+    record('GP-06', True, 'nothing to challenge, so the round went straight to scores')
+    record('RV-05', ste_has_votes == 5 and explains,
+           f'blank player reviews {ste_has_votes} answers; other player told why they have nothing to review: {explains}')
+    for p in (ste, ade):
+        await p.context.close()
+
+
+async def dropped_player_round(browser):
+    a = await player(browser)
+    b = await player(browser)
+    code = await create_room(a, 'A')
+    await join_link(b, code, 'B')
+    await a.click('#startBtn')
+    await wait_phase(a, 'picking')
+    await a.click('.alphabet button[data-letter="B"]')
+    for p in (a, b):
+        await wait_phase(p, 'answering')
+    await fill_answers(a, {'name': 'Bob', 'food': 'Bread', 'animal': 'Bear', 'place': 'Berlin', 'thing': 'Ball'})
+    await b.evaluate('window.__ngSocket.disconnect()')  # B's phone locks
+    await hook(a, 'deadlineIn', ms=300)
+    await wait_phase(a, 'voting')
+    await expect(a.locator('main')).to_contain_text('lost connection')
+    await b.evaluate('window.__ngSocket.connect()')     # B unlocks it
+    await wait_phase(b, 'voting')
+    await expect(b.locator('.thumb.up')).to_have_count(5)
+    await vote_all(b)
+    await wait_phase(a, ('challenge', 'results'))
+    score = await a.evaluate('window.__ng.view.you.score')
+    record('GP-12', score == 5, f'B dropped and came back: B reviewed A, A scored {score}')
+    for p in (a, b):
+        await p.context.close()
+
+
 async def main():
     os.makedirs(SHOTS, exist_ok=True)
     async with async_playwright() as pw:
@@ -403,6 +458,8 @@ async def main():
         await run('lobby_and_sharing', lobby_and_sharing, browser)
         await run('full_game', full_game, browser)
         await run('mobile_and_a11y', mobile_and_a11y, browser)
+        await run('blank_player_round', blank_player_round, browser)
+        await run('dropped_player_round', dropped_player_round, browser)
         await browser.close()
     out = os.path.join(HERE, 'e2e-results.json')
     json.dump(results, open(out, 'w'), indent=2)
@@ -410,4 +467,5 @@ async def main():
         print(('PASS ' if v['pass'] else 'FAIL ') + k + '  ' + v['detail'])
 
 
-asyncio.run(main())
+if __name__ == '__main__':
+    asyncio.run(main())

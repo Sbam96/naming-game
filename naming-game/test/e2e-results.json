@@ -1,11 +1,11 @@
 {
   "GR-01": {
     "pass": true,
-    "detail": "room WV98K"
+    "detail": "room WWEZN"
   },
   "SL-02": {
     "pass": true,
-    "detail": "prompt \"Join Naming Game\", guest in lobby"
+    "detail": "prompt \"Join Alphabet Challenge\", guest in lobby"
   },
   "GR-02": {
     "pass": true,
@@ -13,11 +13,11 @@
   },
   "SL-03": {
     "pass": true,
-    "detail": "clipboard=http://localhost:3456/r/WV98K share=http://localhost:3456/r/WV98K"
+    "detail": "clipboard=http://localhost:3456/r/WWEZN share=http://localhost:3456/r/WWEZN"
   },
   "SL-04": {
     "pass": true,
-    "detail": "decoded http://localhost:3456/r/WV98K"
+    "detail": "decoded http://localhost:3456/r/WWEZN"
   },
   "GR-03": {
     "pass": true,
@@ -102,5 +102,17 @@
   "MS-06": {
     "pass": true,
     "detail": "axe: no serious/critical issues; keyboard create, pick and vote worked"
+  },
+  "GP-06": {
+    "pass": true,
+    "detail": "nothing to challenge, so the round went straight to scores"
+  },
+  "RV-05": {
+    "pass": true,
+    "detail": "blank player reviews 5 answers; other player told why they have nothing to review: True"
+  },
+  "GP-12": {
+    "pass": true,
+    "detail": "B dropped and came back: B reviewed A, A scored 5"
   }
 }

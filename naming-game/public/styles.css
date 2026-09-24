@@ -8,6 +8,11 @@
   --ok: #1E9A60;
   --no: #C8403A;
   --card: #FFFFFF;
+  --c-name: #FFE45C;
+  --c-food: #FFB866;
+  --c-animal: #7FE3B4;
+  --c-place: #93CBFF;
+  --c-thing: #FF9BCB;
   --line: 32px;
   --display: "Archivo Black", "Arial Black", Impact, sans-serif;
   --body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -104,14 +109,17 @@ legend { font-weight: 700; padding: 0; }
 .radio { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; margin-right: 16px; }
 
 .btn {
-  font: 700 16px/1 var(--body); color: var(--paper); background: var(--ink); border: 2px solid var(--ink);
-  border-radius: 6px; padding: 12px 18px; min-height: 44px; cursor: pointer;
+  font: 700 16px/1 var(--body); color: #17233F; background: var(--c-name); border: 2px solid #17233F;
+  border-radius: 8px; padding: 12px 18px; min-height: 44px; cursor: pointer;
+  box-shadow: 3px 3px 0 #17233F; transition: transform .08s, box-shadow .08s;
 }
-.btn:hover { filter: brightness(1.15); }
-.btn.ghost { background: transparent; color: var(--ink); }
+.btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 #17233F; }
+.btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #17233F; }
+@media (prefers-color-scheme: dark) { .btn { border-color: #0A1224; box-shadow: 3px 3px 0 #0A1224; } }
+.btn.ghost { background: var(--card); color: var(--ink); border-color: var(--ink); box-shadow: 3px 3px 0 var(--ink); }
 .btn.small { padding: 6px 10px; min-height: 36px; font-size: 14px; }
-.btn[disabled] { opacity: .45; cursor: not-allowed; filter: none; }
-.btn.warn { background: transparent; color: var(--no); border-color: var(--no); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn.warn { background: var(--card); color: var(--no); border-color: var(--no); box-shadow: 3px 3px 0 var(--no); }
 .linkish { background: none; border: 0; color: var(--ink); text-decoration: underline; font: inherit; cursor: pointer; padding: 0; }
 
 /* answer sheet */
@@ -120,8 +128,10 @@ legend { font-weight: 700; padding: 0; }
 .sheet-row .hint { grid-column: 2; margin: 0; }
 @media (max-width: 420px) { .sheet-row { grid-template-columns: 1fr; } .sheet-row .hint { grid-column: 1; } }
 
-.timer { font-family: var(--display); font-size: 22px; }
-.timer.low { color: var(--no); }
+.timer { font-family: var(--display); font-size: 20px; line-height: 1; padding: 6px 12px; border: 2px solid var(--ink); border-radius: 999px; background: var(--card); min-width: 3.4em; text-align: center; }
+.timer:empty { display: none; }
+.timer.low { color: #fff; background: var(--no); border-color: var(--no); }
+@media (prefers-reduced-motion: no-preference) { .timer.low { animation: pulse 1s ease-in-out infinite; } @keyframes pulse { 50% { transform: scale(1.08); } } }
 .status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
 
 /* review */
@@ -168,3 +178,49 @@ dialog h2 { margin-top: 0; }
 #qrImg { display: block; background: #fff; margin: 12px 0; max-width: 100%; height: auto; }
 
 .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 10px 16px; border-radius: 6px; max-width: 90vw; z-index: 20; }
+
+/* ---------- Alphabet Challenge: colour + life ---------- */
+.c-name { background: var(--c-name) !important; }
+.c-food { background: var(--c-food) !important; }
+.c-animal { background: var(--c-animal) !important; }
+.c-place { background: var(--c-place) !important; }
+.c-thing { background: var(--c-thing) !important; }
+.alphabet button.tile[disabled] { background: transparent !important; }
+
+.wordmark { display: inline-flex; align-items: center; gap: 8px; }
+.mini-tile { display: inline-grid; place-items: center; width: 28px; height: 28px; font-family: var(--display); font-size: 17px; color: #17233F; background: var(--c-name); border: 2px solid #17233F; border-radius: 5px; box-shadow: 2px 2px 0 #17233F; transform: rotate(-6deg); }
+
+.hero { margin: 20px 0 8px; line-height: 1; }
+.hero-word { display: flex; flex-wrap: wrap; gap: 6px; }
+.hero-tile { width: clamp(34px, 9vw, 60px); height: clamp(34px, 9vw, 60px); font-size: clamp(22px, 6vw, 40px); transform: rotate(calc((var(--i) - 3.5) * 1.6deg)); }
+.hero-tile:nth-child(even) { transform: rotate(calc((var(--i) - 3.5) * -1.4deg)) translateY(3px); }
+.hero-sub { display: block; font-family: var(--display); font-size: clamp(40px, 11vw, 72px); letter-spacing: -.01em; margin-top: 10px; }
+@media (prefers-reduced-motion: no-preference) {
+  .hero-tile { animation: tumble .6s cubic-bezier(.2, 1.5, .4, 1) both; animation-delay: calc(var(--i) * 70ms); }
+  @keyframes tumble { from { opacity: 0; transform: translateY(-40px) rotate(-25deg); } }
+}
+.lede { font-size: 20px; line-height: 1.5; margin: 8px 0 16px; }
+.cat-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
+
+.chip { display: inline-block; font-family: var(--display); font-weight: 400; font-size: 15px; line-height: 1; color: #17233F; padding: 7px 10px; border: 2px solid #17233F; border-radius: 999px; }
+.chip-name { background: var(--c-name); }
+.chip-food { background: var(--c-food); }
+.chip-animal { background: var(--c-animal); }
+.chip-place { background: var(--c-place); }
+.chip-thing { background: var(--c-thing); }
+.sheet-row label.chip { justify-self: start; }
+.review-row .cat.chip { justify-self: start; font-size: 14px; }
+
+.howto { margin-top: 40px; }
+.steps { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 14px; max-width: 640px; }
+.steps li { display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
+.steps h3 { font-size: 18px; line-height: 1.3; margin: 2px 0 2px; }
+.steps p { margin: 0; line-height: 1.5; }
+.step-tile { width: 40px; height: 40px; font-size: 20px; }
+.steps li:nth-child(odd) .step-tile { transform: rotate(-4deg); }
+.steps li:nth-child(even) .step-tile { transform: rotate(3deg); }
+
+.tile.big { box-shadow: 5px 5px 0 #17233F; }
+.confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 30; }
+.confetti i { position: absolute; top: -12px; width: 10px; height: 14px; border-radius: 2px; animation: fall linear forwards; }
+@keyframes fall { to { top: 110vh; transform: rotate(720deg); } }

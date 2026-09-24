@@ -66,10 +66,14 @@
     S.screen = 'game';
     if (location.pathname !== `/r/${v.room.code}`) history.replaceState(null, '', `/r/${v.room.code}`);
     if (prevPhase !== v.room.phase || S.lastRound !== v.room.roundNo) announce(v);
+    if (prevPhase && prevPhase !== 'final' && v.room.phase === 'final') setTimeout(confetti, 50);
     S.lastRound = v.room.roundNo;
     render();
   });
   socket.on('removed', ({ reason }) => removed(reason));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !socket.connected) socket.connect();
+  });
 
   function removed(reason) {
     store.del('ng.session');
@@ -208,12 +212,23 @@
     <div class="field"><label for="nameInput">${label}</label>
       <input id="nameInput" type="text" maxlength="20" autocomplete="nickname" value="${esc(store.get('ng.name', ''))}"></div>`;
 
+  const TILE_COLOURS = ['c-name', 'c-food', 'c-animal', 'c-place', 'c-thing'];
+  const letterColour = (L) => TILE_COLOURS[(L.charCodeAt(0) - 65) % 5];
+
   function renderHome() {
+    const word = [...'ALPHABET'].map((L, i) => `<span class="tile hero-tile ${TILE_COLOURS[i % 5]}" style="--i:${i}">${L}</span>`).join('');
+    const steps = [
+      ['Make a room', 'Create a room and send the link, code or QR code to your friends. You need at least 2 players.'],
+      ['Pick a letter', 'Players take turns choosing the letter. Each letter can only be played once per game.'],
+      ['Beat the clock', 'Write a Name, Food, Animal, Place and Thing starting with that letter before the timer runs out. Up to 3 words each.'],
+      ['Judge a friend', "You're given one other player's answers. Thumbs up if it counts, thumbs down if it doesn't."],
+      ['Challenge it', 'Think a thumbs down was unfair? Challenge it and the whole group votes. You get 4 challenges a game.'],
+      ['Win', 'Every thumbs up is a point. Whoever has the most after 26 letters, or when the host ends the game, wins.'],
+    ];
     return `
-      <div class="game-head" aria-hidden="true"><span>Name</span><span>Food</span><span>Animal</span><span>Place</span><span>Thing</span></div>
-      <span class="tile hero" aria-hidden="true">N</span>
-      <h1>Pick a letter. Beat the clock.</h1>
-      <p class="muted">The pen-and-paper game, played online. Share a link, fill in five categories, and let your friends be the judge.</p>
+      <h1 class="hero" aria-label="Alphabet Challenge"><span class="hero-word" aria-hidden="true">${word}</span><span class="hero-sub" aria-hidden="true">Challenge</span></h1>
+      <p class="lede">Pick a letter. Beat the clock. Let your friends be the judge.</p>
+      <div class="cat-strip" aria-hidden="true">${CATS.map((c) => `<span class="chip chip-${c}">${LABEL[c]}</span>`).join('')}</div>
       ${nameField()}
       <div class="row">
         <button class="btn" data-action="create">Create room</button>
@@ -225,7 +240,11 @@
         <label class="sr-only" for="codeInput">Room code</label>
         <input id="codeInput" type="text" maxlength="5" placeholder="Room code" autocapitalize="characters" style="max-width:170px">
         <button class="btn ghost" data-action="join-code">Join room</button>
-      </div>`;
+      </div>
+      <section class="howto" aria-labelledby="howto-title">
+        <h2 id="howto-title">How to play</h2>
+        <ol class="steps">${steps.map(([t, d], i) => `<li><span class="tile step-tile ${TILE_COLOURS[i % 5]}" aria-hidden="true">${i + 1}</span><div><h3>${t}</h3><p>${d}</p></div></li>`).join('')}</ol>
+      </section>`;
   }
 
   function renderJoin() {
@@ -351,11 +370,11 @@
     const tiles = LETTERS.map((L) => {
       const isUsed = used.has(L);
       const label = isUsed ? `${L}, already used` : L;
-      if (mine) return `<button class="tile" data-action="pick" data-letter="${L}" ${isUsed ? 'disabled' : ''} aria-label="${label}">${L}</button>`;
-      return `<button class="tile" ${isUsed ? 'disabled' : 'aria-disabled="true"'} tabindex="-1" aria-label="${label}">${L}</button>`;
+      if (mine) return `<button class="tile ${letterColour(L)}" data-action="pick" data-letter="${L}" ${isUsed ? 'disabled' : ''} aria-label="${label}">${L}</button>`;
+      return `<button class="tile ${letterColour(L)}" ${isUsed ? 'disabled' : 'aria-disabled="true"'} tabindex="-1" aria-label="${label}">${L}</button>`;
     }).join('');
     return `
-      <div class="status"><h1>${mine ? 'Your pick' : `${esc(nameOf(r.pickerId))} is picking`}</h1><span class="timer" id="timer" aria-label="Seconds left"></span></div>
+      <div class="status"><h1>${mine ? 'Your pick' : `${esc(nameOf(r.pickerId))} is picking`}</h1><span class="timer" id="timer" role="timer" aria-label="Seconds left"></span></div>
       <p class="muted">Round ${r.roundNo + 1}. ${mine ? 'Choose the letter everyone plays this round.' : 'The letter appears for everyone at the same moment.'} Greyed letters have been used.</p>
       <div class="alphabet ${mine ? '' : 'watch'}" role="group" aria-label="Letters">${tiles}</div>`;
   }
@@ -372,18 +391,18 @@
     if (!a.inRound) {
       return `<div class="tile big" aria-label="Letter ${r.letter}">${r.letter}</div>
         <p>This round started while you were away. You'll play from the next round.</p>
-        <span class="timer" id="timer"></span>`;
+        <span class="timer" id="timer" role="timer"></span>`;
     }
     const rows = CATS.map((c) => {
       const val = S.answers[c] || '';
       const warn = val && val[0].toUpperCase() !== r.letter;
-      return `<div class="sheet-row"><label for="ans-${c}">${LABEL[c]}</label>
+      return `<div class="sheet-row"><label for="ans-${c}" class="chip chip-${c}">${LABEL[c]}</label>
         <input id="ans-${c}" data-cat="${c}" type="text" maxlength="${v.limits.maxChars}" value="${esc(val)}" autocomplete="off" autocapitalize="words" spellcheck="false" aria-describedby="hint-${c}">
         <p class="hint ${warn ? 'warn' : ''}" id="hint-${c}">${warn ? `Doesn't start with ${r.letter}` : ''}</p></div>`;
     }).join('');
     return `
-      <div class="status"><span class="timer" id="timer" aria-label="Seconds left"></span><span class="muted">${a.doneCount} of ${a.participantCount} done</span></div>
-      <div class="tile big ${reveal ? 'reveal' : ''}" role="img" aria-label="Letter ${r.letter}">${r.letter}</div>
+      <div class="status"><span class="timer" id="timer" role="timer" aria-label="Seconds left"></span><span class="muted">${a.doneCount} of ${a.participantCount} done</span></div>
+      <div class="tile big ${letterColour(r.letter)} ${reveal ? 'reveal' : ''}" role="img" aria-label="Letter ${r.letter}">${r.letter}</div>
       <form id="sheet" autocomplete="off" onsubmit="return false">${rows}</form>
       <p class="muted small">Up to ${v.limits.maxWords} words and ${v.limits.maxChars} characters each. You can edit until the timer runs out.</p>
       <div class="row"><button class="btn" data-action="toggle-done" aria-pressed="${a.done}">${a.done ? 'Keep editing' : "I'm done"}</button></div>`;
@@ -393,8 +412,8 @@
     const chosen = S.votes[key] || {};
     const rows = CATS.map((c) => {
       const ans = set.answers[c];
-      if (!ans) return `<div class="review-row"><span class="cat">${LABEL[c]}</span><span class="ans muted">No answer</span><span class="muted small">0 points</span></div>`;
-      return `<div class="review-row"><span class="cat">${LABEL[c]}</span><span class="ans">${esc(ans)}</span>
+      if (!ans) return `<div class="review-row"><span class="cat chip chip-${c}">${LABEL[c]}</span><span class="ans muted">No answer</span><span class="muted small">0 points</span></div>`;
+      return `<div class="review-row"><span class="cat chip chip-${c}">${LABEL[c]}</span><span class="ans">${esc(ans)}</span>
         <span class="thumbs">
           <button class="thumb up" data-action="vote" data-key="${key}" data-cat="${c}" data-up="1" aria-pressed="${chosen[c] === true}" aria-label="Accept ${esc(ans)} for ${LABEL[c]}">👍</button>
           <button class="thumb down" data-action="vote" data-key="${key}" data-cat="${c}" data-up="0" aria-pressed="${chosen[c] === false}" aria-label="Reject ${esc(ans)} for ${LABEL[c]}">👎</button>
@@ -407,7 +426,9 @@
   function renderVoting(v) {
     const r = v.room;
     const sets = v.voting.assigned;
+    const blank = (s) => CATS.every((c) => !s.answers[c]);
     const blocks = sets.map((s) => {
+      if (s.completed && blank(s)) return `<h2>${esc(s.name)}'s answers</h2><p>${esc(s.name)} didn't write any answers this round, so there's nothing for you to review. They score 0.</p>`;
       if (s.completed) return `<h2>${esc(s.name)}'s answers</h2><p>Votes in. Thanks.</p>`;
       const key = `r${r.roundNo}:${s.authorId}`;
       const { rows, complete } = reviewSet(s, key, r.letter);
@@ -415,10 +436,12 @@
         <div class="row"><button class="btn" data-action="submit-votes" data-author="${s.authorId}" data-key="${key}" ${complete ? '' : 'disabled'}>Submit votes</button></div></section>`;
     }).join('');
     return `
-      <div class="status"><h1>Review</h1>${v.voting.closing ? '<span class="muted">Closes in</span> <span class="timer" id="timer" aria-label="Seconds left"></span>' : ''}</div>
+      <div class="status"><h1>Review</h1>${v.voting.closing ? '<span class="muted">Closes in</span> <span class="timer" id="timer" role="timer" aria-label="Seconds left"></span>' : ''}</div>
       ${v.voting.closing ? '' : `<p class="muted small">Voting closes ${v.voting.fallbackSeconds} seconds after the first player submits.</p>`}
       <p class="muted">Letter ${r.letter}. Give a thumbs up if the answer fits the category and starts with ${r.letter}.</p>
       ${blocks || '<p>Nothing for you to review this round.</p>'}
+      ${v.voting.waitingOnAway ? '<p><strong>A player has lost connection. Waiting up to 45 seconds for them to come back and review.</strong></p>'
+        : sets.every((x) => x.completed) ? '<p><strong>Waiting for the other players to finish reviewing.</strong></p>' : ''}
       <p class="muted">${v.voting.completedCount} of ${v.voting.total} answer sets reviewed.</p>`;
   }
 
@@ -459,8 +482,11 @@
         <p class="small" style="margin:0">${c.up} up, ${c.down} down. ${status}.</p>${buttons}</div>`;
     }).join('');
     return `
-      <div class="status"><h1>Round ${r.roundNo}: ${esc(r.letter)}</h1><span class="timer" id="timer" aria-label="Seconds left"></span></div>
-      <p class="muted">${res.windowOpen ? `Think a thumbs down was wrong? Challenge it. You have ${v.you.challengesLeft} of 4 challenges left this game.` : 'The challenge window has closed.'}</p>
+      <div class="status"><h1>Round ${r.roundNo}: ${esc(r.letter)}</h1><span class="timer" id="timer" role="timer" aria-label="Seconds left"></span></div>
+      <p class="muted">${!res.windowOpen ? 'The challenge window has closed.'
+        : res.youCanChallenge ? `Think a thumbs down was wrong? Challenge it. You have ${v.you.challengesLeft} of 4 challenges left this game.`
+          : v.you.challengesLeft > 0 ? "You've nothing to challenge this round. Waiting for the others to decide."
+            : "You've used all 4 challenges this game. Waiting for the others to decide."}</p>
       ${resultsTable(v, true)}
       <h2>Challenges</h2>
       ${chal || '<p class="muted">No challenges yet.</p>'}`;
@@ -478,7 +504,7 @@
       <ul class="leader">${list}</ul>
       <h2>Leaderboard</h2>
       ${boardList(v)}
-      <p class="muted">Next letter in <span class="timer" id="timer"></span></p>`;
+      <p class="muted">Next letter in <span class="timer" id="timer" role="timer"></span></p>`;
   }
 
   function renderPended(v) {
@@ -490,7 +516,7 @@
         <div class="row"><button class="btn" data-action="submit-pended" data-item="${s.id}" data-key="${key}" ${complete ? '' : 'disabled'}>Submit votes</button></div></section>`;
     }).join('');
     return `
-      <div class="status"><h1>Leftover answers</h1><span class="timer" id="timer" aria-label="Seconds left"></span></div>
+      <div class="status"><h1>Leftover answers</h1><span class="timer" id="timer" role="timer" aria-label="Seconds left"></span></div>
       <p class="muted">Some answers weren't reviewed during the game. They're scored now, before the final leaderboard.</p>
       ${blocks || `<p>Waiting for others to finish (${p.remaining} of ${p.total} left).</p>`}`;
   }
@@ -515,6 +541,25 @@
         <button class="btn" data-action="play-again">Play again</button>
         ${v.you.isHost ? `<button class="btn ghost" data-action="restart" ${connected < 2 ? 'disabled' : ''}>Restart game</button>` : ''}
       </div>`;
+  }
+
+  function confetti() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const box = document.createElement('div');
+    box.className = 'confetti';
+    box.setAttribute('aria-hidden', 'true');
+    const colours = ['#FFE45C', '#FFB866', '#7FE3B4', '#93CBFF', '#FF9BCB'];
+    for (let i = 0; i < 70; i++) {
+      const b = document.createElement('i');
+      b.style.left = `${Math.random() * 100}%`;
+      b.style.background = colours[i % 5];
+      b.style.animationDelay = `${Math.random() * 0.6}s`;
+      b.style.animationDuration = `${2.2 + Math.random() * 1.6}s`;
+      b.style.transform = `rotate(${Math.random() * 360}deg)`;
+      box.appendChild(b);
+    }
+    document.body.appendChild(box);
+    setTimeout(() => box.remove(), 4500);
   }
 
   function fillBoard() {
@@ -566,7 +611,7 @@
     },
     'share-link': async () => {
       if (navigator.share) {
-        try { await navigator.share({ title: 'Join my Naming Game', text: `Room ${S.view.room.code}`, url: roomLink() }); } catch { /* dismissed */ }
+        try { await navigator.share({ title: 'Join my Alphabet Challenge', text: `Room ${S.view.room.code}`, url: roomLink() }); } catch { /* dismissed */ }
       } else {
         handlers['copy-link']();
       }

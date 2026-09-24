@@ -50,8 +50,8 @@ function voteAll(ctx, decide = () => true) {
   }
 }
 function finishRound(ctx) {
-  // challenge window -> results -> next picking
-  ctx.adv(ctx.room.settings.challengeTime);
+  // challenge window (skipped when nobody can challenge) -> results -> next picking
+  if (ctx.room.phase === 'challenge') ctx.adv(ctx.room.settings.challengeTime);
   assert.equal(ctx.room.phase, 'results');
   ctx.adv(8);
 }
@@ -350,6 +350,22 @@ test('RV-05 blank answers cannot be voted on and score 0', () => {
   assert.equal(ctx.room.round.results.get(author).points, 4);
 });
 
+test('RV-05 a player who wrote nothing still reviews the other player\'s answers (2 players)', () => {
+  const ctx = setup(2);
+  playToVoting(ctx, 'B', (id) => (id === ctx.host ? fill('B', { name: '', food: '', animal: '', place: '', thing: '' }) : null));
+  assert.equal(ctx.room.phase, 'voting');
+  const blankPlayer = ctx.room.viewFor(ctx.host, ctx.now).voting.assigned;
+  assert.equal(blankPlayer.length, 1);
+  assert.equal(blankPlayer[0].authorId, ctx.ids[1]);
+  assert.equal(blankPlayer[0].completed, false);
+  ctx.adv(60);
+  assert.equal(ctx.room.phase, 'voting'); // still waiting on the blank player's votes
+  voteAll(ctx);
+  assert.equal(ctx.room.phase, 'results'); // nothing rejected, so no challenge window
+  assert.equal(ctx.p(ctx.ids[1]).score, 5);
+  assert.equal(ctx.p(ctx.host).score, 0);
+});
+
 test('RV-06 reviewers are anonymous in the results', () => {
   const ctx = setup(3);
   playToVoting(ctx);
@@ -485,7 +501,7 @@ test('RV-14 voting closes 30s after the first voter finishes; unreviewed sets ar
   ctx.adv(29);
   assert.equal(ctx.room.phase, 'voting');
   ctx.adv(1);
-  assert.equal(ctx.room.phase, 'challenge');
+  assert.notEqual(ctx.room.phase, 'voting');
   assert.equal(ctx.room.pended.length, 2);
   assert.equal(r.results.get(firstAuthor).status, 'reviewed');
   for (const item of ctx.room.pended) assert.equal(r.results.get(item.authorId).status, 'pended');
@@ -674,10 +690,32 @@ test('GP-05 the letter is revealed to everyone at once and the answer timer star
   }
 });
 
+test('GP-06 the challenge window is skipped when nobody has a thumbs-down to challenge', () => {
+  const ctx = setup(2);
+  playToVoting(ctx);
+  voteAll(ctx, () => true);
+  assert.equal(ctx.room.phase, 'results');
+  // also skipped once the only challengeable answers have been challenged
+  const c2 = setup(2);
+  playToVoting(c2);
+  voteAll(c2, (a, c) => !(a === c2.host && c === 'food'));
+  assert.equal(c2.room.phase, 'challenge');
+  const ch = c2.room.raiseChallenge(c2.host, 'food', c2.now).challengeId;
+  c2.room.voteChallenge(c2.ids[1], ch, false, c2.now);
+  c2.adv(0.2);
+  assert.equal(c2.room.phase, 'results');
+  // a player with challenges left over is told so in their view
+  const c3 = setup(2);
+  playToVoting(c3);
+  voteAll(c3, (a, c) => !(a === c3.host && c === 'food'));
+  assert.equal(c3.room.viewFor(c3.host, c3.now).results.youCanChallenge, true);
+  assert.equal(c3.room.viewFor(c3.ids[1], c3.now).results.youCanChallenge, false);
+});
+
 test('GP-06 no ready vote: the game moves on once voting and the challenge window are done', () => {
   const ctx = setup(3);
   playToVoting(ctx);
-  voteAll(ctx);
+  voteAll(ctx, (a, c) => c !== 'thing');
   assert.equal(ctx.room.phase, 'challenge');
   ctx.adv(30);
   assert.equal(ctx.room.phase, 'results');
@@ -689,7 +727,6 @@ test('GP-07 the leaderboard is shown after each round, before the next letter pi
   const ctx = setup(2);
   playToVoting(ctx);
   voteAll(ctx);
-  ctx.adv(30);
   const v = ctx.room.viewFor(ctx.ids[1], ctx.now);
   assert.equal(v.room.phase, 'results');
   assert.equal(v.leaderboard.length, 2);
@@ -705,7 +742,7 @@ test('GP-08 the leaderboard is available in every phase', () => {
   ctx.room.pickLetter(ctx.host, 'B', ctx.now); check();
   for (const id of ctx.ids) ctx.room.setAnswer(id, 'food', 'Bread', ctx.now);
   ctx.room.setDone(ctx.ids[0], true, ctx.now); ctx.room.setDone(ctx.ids[1], true, ctx.now); check();
-  voteAll(ctx); check();
+  voteAll(ctx, (a, c) => c !== 'food'); check();
   ctx.adv(30); check();
   ctx.room.endGame(ctx.host, ctx.now); check();
   assert.deepEqual([...phases], ['lobby', 'picking', 'answering', 'voting', 'challenge', 'results', 'final']);
@@ -759,8 +796,46 @@ test('GP-12 disconnected players are skipped for picking, their review is reassi
   playToVoting(c2);
   const [author, reviewer] = [...c2.room.round.assignments][0];
   c2.room.disconnect(reviewer, c2.now);
+  assert.equal(c2.room.round.assignments.get(author), reviewer); // kept while they might come back
+  c2.adv(45);
   const newReviewer = c2.room.round.assignments.get(author);
   assert.ok(newReviewer && newReviewer !== reviewer && newReviewer !== author);
+});
+
+test('GP-12 a player whose phone drops the connection keeps their review if they come back within 45s', () => {
+  const ctx = setup(2);
+  ctx.room.start(ctx.host, ctx.now);
+  ctx.room.pickLetter(ctx.host, 'B', ctx.now);
+  for (const c of CATEGORIES) ctx.room.setAnswer(ctx.host, c, `B${c}`, ctx.now);
+  const b = ctx.p(ctx.ids[1]);
+  ctx.room.disconnect(b.id, ctx.now); // B wrote nothing and their phone locked
+  ctx.adv(50);                          // answer timer runs out
+  assert.equal(ctx.room.phase, 'voting');
+  assert.equal(ctx.room.round.assignments.get(ctx.host), b.id);
+  assert.equal(ctx.room.viewFor(ctx.host, ctx.now).voting.waitingOnAway, true);
+  ctx.room.rejoin(b.token, ctx.now + 20_000);
+  ctx.now += 20_000;
+  const mine = ctx.room.viewFor(b.id, ctx.now).voting.assigned;
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].authorId, ctx.host);
+  voteAll(ctx);
+  assert.equal(ctx.p(ctx.host).score, 5);
+});
+
+test('GP-12 if the dropped reviewer does not come back within 45s, the set is pended and the round moves on', () => {
+  const ctx = setup(2);
+  ctx.room.start(ctx.host, ctx.now);
+  ctx.room.pickLetter(ctx.host, 'B', ctx.now);
+  for (const c of CATEGORIES) ctx.room.setAnswer(ctx.host, c, `B${c}`, ctx.now);
+  ctx.room.disconnect(ctx.ids[1], ctx.now);
+  ctx.adv(50);
+  assert.equal(ctx.room.phase, 'voting');
+  ctx.adv(44);
+  assert.equal(ctx.room.phase, 'voting');
+  ctx.adv(2);
+  assert.notEqual(ctx.room.phase, 'voting');
+  assert.equal(ctx.room.pended.length, 1);
+  assert.equal(ctx.room.pended[0].authorId, ctx.host);
 });
 
 // ---------- 9. Misc ----------
@@ -769,6 +844,7 @@ test('MS-04 offensive display and room names are rejected', () => {
   for (const bad of ['shithead', 'sh1t', 'f u c k']) assert.equal(ctx.room.addPlayer(bad, ctx.now).error, 'name_blocked', bad);
   assert.equal(ctx.room.addPlayer('Scunthorpe', ctx.now).ok, true);
   assert.equal(ctx.room.updateSettings(ctx.host, { roomName: 'Naming Game' }).ok, true); // regression: false positive
+  assert.equal(ctx.room.updateSettings(ctx.host, { roomName: 'Alphabet Challenge' }).ok, true);
   assert.equal(ctx.room.updateSettings(ctx.host, { roomName: 'fuck this' }).error, 'name_blocked');
   const reg = new Registry({ isOffensive });
   assert.equal(reg.create({ hostName: 'Ste', roomName: 'shit room', now: 0 }).error, 'name_blocked');

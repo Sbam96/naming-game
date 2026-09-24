@@ -1,5 +1,5 @@
 'use strict';
-// Naming Game engine. Pure logic: every method takes `now` (ms) so timers are testable.
+// Alphabet Challenge game engine. Pure logic: every method takes `now` (ms) so timers are testable.
 const crypto = require('crypto');
 
 const CATEGORIES = ['name', 'food', 'animal', 'place', 'thing'];
@@ -21,6 +21,7 @@ const FIXED = {
   pendedTime: 60,        // end-of-game pended review
   votingCap: 120,        // voting closes even if nobody finishes
   hostGrace: 20,         // host disconnected this long -> role passes on
+  reviewerGrace: 45,     // a reviewer whose connection drops keeps their review this long (phones sleep)
   emptyGrace: 60,        // everyone disconnected this long -> room closes
 };
 const MAX_WORDS = 3;
@@ -42,7 +43,7 @@ function validateAnswer(text) {
 class Room {
   constructor({ code, roomName, visibility, now = Date.now(), rng = Math.random, isOffensive = () => false }) {
     this.code = code;
-    this.name = cleanText(roomName).slice(0, 30) || 'Naming Game';
+    this.name = cleanText(roomName).slice(0, 30) || 'Alphabet Challenge';
     this.visibility = visibility === 'public' ? 'public' : 'private';
     this.rng = rng;
     this.isOffensive = isOffensive;
@@ -80,6 +81,16 @@ class Room {
   sortedPlayers() { return [...this.players.values()].sort((a, b) => a.seq - b.seq); }
   connectedPlayers() { return this.sortedPlayers().filter((p) => p.connected); }
   isHost(id) { return this.hostId === id; }
+  // Connected, or only just dropped (a locked phone) and still within the grace period.
+  // During voting the grace runs from whichever is later: the drop, or the start of voting.
+  isPresent(id, now) {
+    const p = this.players.get(id);
+    if (!p) return false;
+    if (p.connected) return true;
+    if (p.disconnectedAt === null) return false;
+    const from = Math.max(p.disconnectedAt, this.round?.votingStartedAt ?? 0);
+    return now - from < FIXED.reviewerGrace * 1000;
+  }
   shuffle(arr) {
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) {
@@ -183,11 +194,7 @@ class Room {
         r.participants = r.participants.filter((x) => x !== p.id);
         r.assignments.delete(p.id);
       }
-      for (const [author, reviewer] of r.assignments) {
-        if (reviewer === p.id && !r.completed.has(author)) {
-          r.assignments.set(author, this.pickReassignment(author, p.id, r));
-        }
-      }
+      if (removed) this.reassignReviewsOf(p.id, now);
       this.checkVotingComplete(now);
     }
     if (this.phase === 'challenge' && r) {
@@ -204,7 +211,16 @@ class Room {
     }
   }
 
-  pickReassignment(authorId, leavingId, r) {
+  reassignReviewsOf(reviewerId, now) {
+    const r = this.round;
+    for (const [author, reviewer] of r.assignments) {
+      if (reviewer === reviewerId && !r.completed.has(author)) {
+        r.assignments.set(author, this.pickReassignment(author, reviewerId, r, now));
+      }
+    }
+  }
+
+  pickReassignment(authorId, leavingId, r, now) {
     const load = new Map();
     for (const rev of r.assignments.values()) if (rev) load.set(rev, (load.get(rev) || 0) + 1);
     const candidates = this.connectedPlayers()
@@ -334,11 +350,12 @@ class Room {
   closeAnswering(now) {
     const r = this.round;
     this.phase = 'voting';
+    r.votingStartedAt = now;
     r.assignments = new Map(r.participants.map((a) => [a, null]));
     r.votes = new Map();
     r.completed = new Set();
     r.firstCompleteAt = null;
-    const reviewers = r.participants.filter((pid) => this.players.get(pid)?.connected);
+    const reviewers = r.participants.filter((pid) => this.isPresent(pid, now));
     if (reviewers.length >= 2) {
       const map = this.buildAssignment(reviewers);
       for (const [rev, author] of map) r.assignments.set(author, rev);
@@ -423,7 +440,7 @@ class Room {
   checkVotingComplete(now) {
     const r = this.round;
     const outstanding = [...r.assignments].filter(([a, rev]) => rev && !r.completed.has(a)
-      && this.players.get(rev)?.connected);
+      && this.isPresent(rev, now));
     if (!outstanding.length) this.closeVoting(now);
   }
 
@@ -458,6 +475,21 @@ class Room {
     r.challengeDeadline = now + this.settings.challengeTime * 1000;
     this.deadline = r.challengeDeadline;
     this.phase = 'challenge';
+    // Nobody has a thumbs-down they could challenge: don't make everyone sit through the window.
+    if (!this.anyoneCanChallenge()) this.beginResults(now);
+  }
+
+  canChallenge(id) {
+    const r = this.round;
+    const p = this.players.get(id);
+    const res = r && r.results && r.results.get(id);
+    if (!p || !p.connected || p.challengesLeft <= 0 || !res || res.status !== 'reviewed') return false;
+    return CATEGORIES.some((c) => res.votes[c] === false
+      && !r.challenges.some((ch) => ch.authorId === id && ch.cat === c));
+  }
+
+  anyoneCanChallenge() {
+    return this.round.participants.some((id) => this.canChallenge(id));
   }
 
   addThumbs(id, n) { this.stats.thumbsUp.set(id, (this.stats.thumbsUp.get(id) || 0) + n); }
@@ -717,8 +749,20 @@ class Room {
         if (ch.status === 'tie' && now >= ch.deadline) { this.resolveChallenge(ch, false, 'timeout'); this.bump(); }
       }
       const unresolved = this.round.challenges.some((c) => c.status === 'open' || c.status === 'tie');
-      if (now >= this.round.challengeDeadline && !unresolved) { this.beginResults(now); this.bump(); }
+      if (!unresolved && (now >= this.round.challengeDeadline || !this.anyoneCanChallenge())) { this.beginResults(now); this.bump(); }
       return this.version !== before;
+    }
+    if (this.phase === 'voting' && this.round) {
+      const r = this.round;
+      let moved = false;
+      for (const [author, rev] of r.assignments) {
+        if (rev && !r.completed.has(author) && !this.isPresent(rev, now)) {
+          r.assignments.set(author, this.pickReassignment(author, rev, r, now));
+          moved = true;
+        }
+      }
+      if (moved) { this.checkVotingComplete(now); this.bump(); }
+      if (this.phase !== 'voting') return true;
     }
     if (this.deadline === null || now < this.deadline) return this.version !== before;
     switch (this.phase) {
@@ -778,7 +822,9 @@ class Room {
         completed: r.completed.has(a),
       }));
       const assignedTotal = [...r.assignments.values()].filter(Boolean).length;
-      view.voting = { assigned: mine, completedCount: r.completed.size, total: assignedTotal,
+      const waitingOnAway = [...r.assignments].some(([a, rev]) => rev && !r.completed.has(a)
+        && !this.players.get(rev)?.connected && this.isPresent(rev, now));
+      view.voting = { assigned: mine, completedCount: r.completed.size, total: assignedTotal, waitingOnAway,
         closing: r.firstCompleteAt !== null, fallbackSeconds: this.settings.reviewFallback };
     }
     if (r && ['challenge', 'results'].includes(this.phase)) {
@@ -790,6 +836,7 @@ class Room {
         }),
         challengeDeadline: r.challengeDeadline,
         windowOpen: this.phase === 'challenge' && now < r.challengeDeadline,
+        youCanChallenge: this.phase === 'challenge' && now < r.challengeDeadline && this.canChallenge(id),
         challenges: r.challenges.map((ch) => {
           const { up, down } = this.tally(ch);
           return { id: ch.id, authorId: ch.authorId, authorName: this.players.get(ch.authorId)?.name || 'Player',

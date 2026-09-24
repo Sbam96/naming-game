@@ -197,7 +197,7 @@ function createServer({ port = process.env.PORT || 3000, tickMs = 200, testHooks
 }
 
 if (require.main === module) {
-  createServer().listen().then((port) => console.log(`Naming Game running on http://localhost:${port}`));
+  createServer().listen().then((port) => console.log(`Alphabet Challenge running on http://localhost:${port}`));
 }
 
 module.exports = { createServer, isOffensive };
