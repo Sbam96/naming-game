@@ -138,11 +138,11 @@ function createServer({ port = process.env.PORT || 3000, tickMs = 200, testHooks
         case 'pick': res = room.pickLetter(id, msg.letter, now); break;
         case 'answer': res = room.setAnswer(id, msg.category, msg.text, now); break;
         case 'done': res = room.setDone(id, !!msg.done, now); break;
-        case 'votes': res = room.submitVotes(id, msg.authorId, msg.votes, now); break;
+        case 'vote': res = room.voteAnswer(id, msg.authorId, msg.category, !!msg.up, now); break;
         case 'challenge': res = room.raiseChallenge(id, msg.category, now); break;
         case 'challengeVote': res = room.voteChallenge(id, msg.challengeId, msg.up, now); break;
         case 'decideTie': res = room.decideTie(id, msg.challengeId, msg.up, now); break;
-        case 'pendedVotes': res = room.submitPendedVotes(id, msg.itemId, msg.votes, now); break;
+        case 'nextRound': res = room.nextRound(id, now); break;
         case 'end': res = room.endGame(id, now); break;
         case 'restart': res = room.restart(id, now); break;
         case 'playAgain': res = room.playAgain(id, now); break;
@@ -163,7 +163,6 @@ function createServer({ port = process.env.PORT || 3000, tickMs = 200, testHooks
         if (msg.action === 'useLetters') for (const L of msg.letters || []) room.usedLetters.add(L);
         if (msg.action === 'deadlineIn') {
           room.deadline = now + (msg.ms || 0);
-          if (room.round && room.round.challengeDeadline) room.round.challengeDeadline = room.deadline;
         }
         room.bump();
         broadcast(room);
@@ -197,7 +196,7 @@ function createServer({ port = process.env.PORT || 3000, tickMs = 200, testHooks
 }
 
 if (require.main === module) {
-  createServer().listen().then((port) => console.log(`Alphabet Challenge running on http://localhost:${port}`));
+  createServer().listen().then((port) => console.log(`Letter Blitz running on http://localhost:${port}`));
 }
 
 module.exports = { createServer, isOffensive };

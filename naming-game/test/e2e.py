@@ -77,13 +77,12 @@ async def fill_answers(page, answers):
 
 
 async def vote_all(page, reject=()):
-    """Thumbs up everything except answers whose text is in `reject`, then submit."""
+    """Thumbs up everything except answers whose text is in `reject`. Each click votes immediately."""
     rows = page.locator('.review-row .thumbs')
     for i in range(await rows.count()):
         row = page.locator('.review-row').filter(has=page.locator('.thumbs')).nth(i)
         ans = (await row.locator('.ans').inner_text()).strip()
         await row.locator('.thumb.down' if ans in reject else '.thumb.up').click()
-    await page.click('button:has-text("Submit votes")')
 
 
 async def play_round(pages, letter, answers, reject=(), skip_to='picking'):
@@ -104,7 +103,7 @@ async def play_round(pages, letter, answers, reject=(), skip_to='picking'):
     if skip_to == 'challenge':
         return
     if await phase(pages[0]) == 'challenge':
-        await hook(pages[0], 'deadlineIn', ms=0)
+        await pages[0].click('button:has-text("Move on")')
     await wait_phase(pages[0], 'results')
     if skip_to == 'results':
         return
@@ -193,8 +192,8 @@ async def lobby_and_sharing(browser):
     await host.fill('#set-answerTime', '75')
     await host.click('button:has-text("Save settings")')
     await expect(host.locator('#toast')).to_contain_text('between 20 and 60')
-    defaults = [await host.input_value(f'#set-{k}') for k in ('pickTime', 'reviewFallback', 'challengeTime')]
-    record('GR-04', defaults == ['20', '30', '30'], f'defaults pick/review/challenge {defaults}; 75s rejected')
+    defaults = [await host.input_value(f'#set-{k}') for k in ('pickTime',)]
+    record('GR-04', defaults == ['20'], f'defaults pick {defaults}; 75s rejected')
 
     # GR-06 one-click start with defaults, GR-05 locked in game, GR-02 end game control
     await host.fill('#set-answerTime', '50')
@@ -283,7 +282,7 @@ async def full_game(browser):
     record('GP-08', 'Ste' in board and 'Ade' in board, 'leaderboard dialog lists both players')
     await guest.keyboard.press('Escape')
 
-    await hook(host, 'deadlineIn', ms=0)
+    await host.click('button:has-text("Move on")')
     await wait_phase(host, 'results')
     lb = await host.locator('.leader').nth(1).inner_text()
     record('GP-07', 'Ste' in lb and 'Ade' in lb, 'leaderboard shown before next pick')
@@ -378,12 +377,10 @@ async def mobile_and_a11y(browser):
     for i in range(await ups.count()):
         await ups.nth(i).focus()
         await host.keyboard.press('Space')
-    await host.locator('button:has-text("Submit votes")').focus()
-    await host.keyboard.press('Enter')
     await vote_all(guest, reject=('Mivian',))
     await wait_phase(host, 'challenge')
     await check('results', host)
-    await hook(host, 'deadlineIn', ms=0)
+    await host.click('button:has-text("Move on")')
     await wait_phase(host, 'results')
     await check('round-scores', host)
     host.once('dialog', lambda d: asyncio.ensure_future(d.accept()))

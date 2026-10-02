@@ -1,32 +1,36 @@
 'use strict';
-// Alphabet Challenge game engine. Pure logic: every method takes `now` (ms) so timers are testable.
+// Letter Blitz game engine. Pure logic: every method takes `now` (ms) so timers are testable.
 const crypto = require('crypto');
 
 const CATEGORIES = ['name', 'food', 'animal', 'place', 'thing'];
 const CATEGORY_LABELS = { name: 'Name', food: 'Food', animal: 'Animal', place: 'Place', thing: 'Thing' };
 const LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
 const LIMITS = {
-  maxPlayers: [2, 12],
+  maxPlayers: [2, 100],
   answerTime: [20, 60],
   pickTime: [10, 60],
-  reviewFallback: [15, 120],
-  challengeTime: [15, 120],
 };
-const DEFAULT_SETTINGS = { maxPlayers: 8, answerTime: 50, pickTime: 20, reviewFallback: 30, challengeTime: 30 };
+// The host picks a room size from these bands rather than typing a number.
+// Only the cap matters to the engine; the tier is purely a client-side grouping.
+const ROOM_SIZE_TIERS = [
+  { cap: 8, label: '1-8' },
+  { cap: 20, label: '9-20' },
+  { cap: 50, label: '21-50' },
+  { cap: 100, label: '50-100' },
+];
+const DEFAULT_SETTINGS = { maxPlayers: 8, answerTime: 50, pickTime: 20 };
 // Timers not covered by the requirements (flagged as assumptions).
+// Voting and the challenge step no longer force-close on a clock: voting waits for every
+// present reviewer to finish, and once there's a challenge the host decides when to move on.
 const FIXED = {
   resultsTime: 8,        // round results + leaderboard screen
-  challengeVoteTime: 20, // group vote on one challenge
-  tieDecisionTime: 20,   // host decision on a tied challenge; original result stands after this
-  pendedTime: 60,        // end-of-game pended review
-  votingCap: 120,        // voting closes even if nobody finishes
   hostGrace: 20,         // host disconnected this long -> role passes on
   reviewerGrace: 45,     // a reviewer whose connection drops keeps their review this long (phones sleep)
   emptyGrace: 60,        // everyone disconnected this long -> room closes
 };
 const MAX_WORDS = 3;
 const MAX_CHARS = 25;
-const CHALLENGES_PER_GAME = 4;
+const CHALLENGES_PER_GAME = 7;
 
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
@@ -43,7 +47,7 @@ function validateAnswer(text) {
 class Room {
   constructor({ code, roomName, visibility, now = Date.now(), rng = Math.random, isOffensive = () => false }) {
     this.code = code;
-    this.name = cleanText(roomName).slice(0, 30) || 'Alphabet Challenge';
+    this.name = cleanText(roomName).slice(0, 30) || 'Letter Blitz';
     this.visibility = visibility === 'public' ? 'public' : 'private';
     this.rng = rng;
     this.isOffensive = isOffensive;
@@ -65,7 +69,6 @@ class Room {
     this.round = null;
     this.lastPickerSeq = 0;
     this.reviewHistory = new Map();
-    this.pended = [];
     this.gameEndReason = null;
     this.alphabetComplete = false;
     this.stats = { thumbsUp: new Map(), challenges: [] };
@@ -200,14 +203,9 @@ class Room {
     if (this.phase === 'challenge' && r) {
       for (const ch of r.challenges) {
         if (ch.status === 'tie' && ch.decider === p.id) ch.decider = this.tieDecider(ch.authorId, [p.id]);
+        // The eligible-voter pool just shrank; an open challenge may now have everyone's vote.
         if (ch.status === 'open') this.checkChallenge(ch, now);
       }
-    }
-    if (this.phase === 'pended') {
-      for (const item of this.pended) {
-        if (item.reviewer === p.id && !item.completed) item.reviewer = this.pickPendedReviewer(item, [p.id]);
-      }
-      this.checkPendedComplete(now);
     }
   }
 
@@ -354,7 +352,6 @@ class Room {
     r.assignments = new Map(r.participants.map((a) => [a, null]));
     r.votes = new Map();
     r.completed = new Set();
-    r.firstCompleteAt = null;
     const reviewers = r.participants.filter((pid) => this.isPresent(pid, now));
     if (reviewers.length >= 2) {
       const map = this.buildAssignment(reviewers);
@@ -364,7 +361,7 @@ class Room {
     for (const a of r.participants) {
       if (this.isBlankSet(r.answers[a]) && r.assignments.get(a)) { r.votes.set(a, {}); r.completed.add(a); }
     }
-    this.deadline = now + FIXED.votingCap * 1000;
+    this.deadline = null;
     this.checkVotingComplete(now);
   }
 
@@ -409,32 +406,23 @@ class Room {
     return chosen;
   }
 
-  submitVotes(id, authorId, votes, now) {
+  voteAnswer(id, authorId, category, up, now) {
     const r = this.round;
     if (this.phase !== 'voting' || !r) return fail('wrong_phase');
     if (r.assignments.get(authorId) !== id) return fail('not_assigned');
     if (r.completed.has(authorId)) return fail('already_voted');
-    const clean = this.validateVotes(r.answers[authorId], votes);
-    if (!clean) return fail('incomplete_votes');
-    r.votes.set(authorId, clean);
-    r.completed.add(authorId);
-    if (r.firstCompleteAt === null) {
-      r.firstCompleteAt = now;
-      this.deadline = now + this.settings.reviewFallback * 1000;
+    if (!CATEGORIES.includes(category)) return fail('invalid_category');
+    if (!r.answers[authorId][category]) return fail('blank_answer');
+    const existing = r.votes.get(authorId) || {};
+    existing[category] = !!up;
+    r.votes.set(authorId, existing);
+    const allVoted = CATEGORIES.every((c) => !r.answers[authorId][c] || typeof existing[c] === 'boolean');
+    if (allVoted) {
+      r.completed.add(authorId);
+      this.checkVotingComplete(now);
     }
-    this.checkVotingComplete(now);
     this.bump();
     return ok();
-  }
-
-  validateVotes(answers, votes = {}) {
-    const clean = {};
-    for (const c of CATEGORIES) {
-      if (!answers[c]) continue;
-      if (typeof votes[c] !== 'boolean') return null;
-      clean[c] = votes[c];
-    }
-    return clean;
   }
 
   checkVotingComplete(now) {
@@ -459,21 +447,14 @@ class Room {
         r.results.set(a, { status: 'reviewed', votes: { ...votes }, points });
         pts[a] = points;
       } else {
-        const item = {
-          id: crypto.randomUUID(), authorId: a, roundNo: r.no, letter: r.letter,
-          answers: { ...r.answers[a] }, originalReviewer: r.assignments.get(a) || null,
-          reviewer: null, completed: false, votes: null, points: 0,
-        };
-        this.pended.push(item);
-        r.results.set(a, { status: 'pended', votes: {}, points: 0 });
+        r.results.set(a, { status: 'unreviewed', votes: {}, points: 0 });
         pts[a] = 0;
       }
     }
     for (const p of this.players.values()) if (!(p.id in pts)) pts[p.id] = 0; // missed round (GP-12)
     this.lastRoundPoints = pts;
     r.challenges = [];
-    r.challengeDeadline = now + this.settings.challengeTime * 1000;
-    this.deadline = r.challengeDeadline;
+    this.deadline = null;
     this.phase = 'challenge';
     // Nobody has a thumbs-down they could challenge: don't make everyone sit through the window.
     if (!this.anyoneCanChallenge()) this.beginResults(now);
@@ -497,7 +478,6 @@ class Room {
   raiseChallenge(id, category, now) {
     const r = this.round;
     if (this.phase !== 'challenge' || !r) return fail('wrong_phase');
-    if (now >= r.challengeDeadline) return fail('window_closed');
     const res = r.results.get(id);
     if (!res || res.status !== 'reviewed') return fail('not_challengeable');
     if (res.votes[category] !== false) return fail('not_challengeable');
@@ -507,7 +487,7 @@ class Room {
     p.challengesLeft--;
     const ch = {
       id: crypto.randomUUID(), authorId: id, cat: category, answer: r.answers[id][category],
-      votes: new Map(), status: 'open', deadline: now + FIXED.challengeVoteTime * 1000,
+      votes: new Map(), status: 'open',
       decider: null, decidedBy: null,
     };
     r.challenges.push(ch);
@@ -557,7 +537,6 @@ class Room {
     else {
       ch.status = 'tie';
       ch.decider = this.tieDecider(ch.authorId);
-      ch.deadline = now + FIXED.tieDecisionTime * 1000;
       if (!ch.decider) this.resolveChallenge(ch, false, 'timeout');
     }
   }
@@ -588,6 +567,17 @@ class Room {
     return ok();
   }
 
+  nextRound(id, now) {
+    if (!this.isHost(id)) return fail('not_host');
+    if (this.phase !== 'challenge') return fail('wrong_phase');
+    for (const ch of this.round.challenges) {
+      if (ch.status === 'open' || ch.status === 'tie') this.resolveChallenge(ch, false, 'host_advanced');
+    }
+    this.beginResults(now);
+    this.bump();
+    return ok();
+  }
+
   beginResults(now) {
     this.phase = 'results';
     this.deadline = now + FIXED.resultsTime * 1000;
@@ -604,7 +594,7 @@ class Room {
 
   endGame(id, now) {
     if (!this.isHost(id)) return fail('not_host');
-    if (!this.inGame() || this.phase === 'pended') return fail('wrong_phase');
+    if (!this.inGame()) return fail('wrong_phase');
     if (this.phase === 'challenge') {
       for (const ch of this.round.challenges) if (ch.status === 'open' || ch.status === 'tie') this.resolveChallenge(ch, false, 'ended');
     }
@@ -617,63 +607,6 @@ class Room {
     this.gameEndReason = reason;
     this.round = null;
     this.pickerId = null;
-    if (this.pended.length) this.beginPended(now);
-    else this.goFinal(now);
-  }
-
-  pickPendedReviewer(item, exclude = []) {
-    const candidates = this.connectedPlayers().filter((p) => p.id !== item.authorId && !exclude.includes(p.id));
-    const preferred = candidates.filter((p) => p.id !== item.originalReviewer);
-    const pool = preferred.length ? preferred : candidates;
-    if (!pool.length) return null;
-    return pool[Math.floor(this.rng() * pool.length)].id;
-  }
-
-  beginPended(now) {
-    this.phase = 'pended';
-    for (const item of this.pended) {
-      item.reviewer = this.pickPendedReviewer(item);
-      if (this.isBlankSet(item.answers)) { item.completed = true; item.votes = {}; }
-    }
-    this.deadline = now + FIXED.pendedTime * 1000;
-    this.checkPendedComplete(now);
-  }
-
-  submitPendedVotes(id, itemId, votes, now) {
-    if (this.phase !== 'pended') return fail('wrong_phase');
-    const item = this.pended.find((i) => i.id === itemId);
-    if (!item) return fail('unknown_item');
-    if (item.reviewer !== id) return fail('not_assigned');
-    if (item.completed) return fail('already_voted');
-    const clean = this.validateVotes(item.answers, votes);
-    if (!clean) return fail('incomplete_votes');
-    this.scorePended(item, clean);
-    this.checkPendedComplete(now);
-    this.bump();
-    return ok();
-  }
-
-  scorePended(item, votes) {
-    item.votes = votes;
-    item.completed = true;
-    item.points = Object.values(votes).filter(Boolean).length;
-    const p = this.players.get(item.authorId);
-    if (p) { p.score += item.points; this.addThumbs(p.id, item.points); }
-  }
-
-  checkPendedComplete(now, force = false) {
-    if (this.phase !== 'pended') return;
-    const open = this.pended.filter((i) => !i.completed && i.reviewer && this.players.get(i.reviewer)?.connected);
-    if (open.length && !force) return;
-    // Anything left unreviewed is accepted (assumption: a missing reviewer shouldn't cost the author).
-    for (const item of this.pended) {
-      if (!item.completed) {
-        const votes = {};
-        for (const c of CATEGORIES) if (item.answers[c]) votes[c] = true;
-        item.autoAccepted = true;
-        this.scorePended(item, votes);
-      }
-    }
     this.goFinal(now);
   }
 
@@ -743,15 +676,6 @@ class Room {
       const lastGone = Math.max(...[...this.players.values()].map((p) => p.disconnectedAt || 0));
       if (now - lastGone >= FIXED.emptyGrace * 1000) { this.closed = true; this.bump(); return true; }
     }
-    if (this.deadline !== null && this.phase === 'challenge') {
-      for (const ch of this.round.challenges) {
-        if (ch.status === 'open' && now >= ch.deadline) { this.checkChallenge(ch, now, true); this.bump(); }
-        if (ch.status === 'tie' && now >= ch.deadline) { this.resolveChallenge(ch, false, 'timeout'); this.bump(); }
-      }
-      const unresolved = this.round.challenges.some((c) => c.status === 'open' || c.status === 'tie');
-      if (!unresolved && (now >= this.round.challengeDeadline || !this.anyoneCanChallenge())) { this.beginResults(now); this.bump(); }
-      return this.version !== before;
-    }
     if (this.phase === 'voting' && this.round) {
       const r = this.round;
       let moved = false;
@@ -768,9 +692,7 @@ class Room {
     switch (this.phase) {
       case 'picking': this.passPicker(now); break;
       case 'answering': this.closeAnswering(now); break;
-      case 'voting': this.closeVoting(now); break;
       case 'results': this.afterResults(now); break;
-      case 'pended': this.checkPendedComplete(now, true); break;
       default: return this.version !== before;
     }
     this.bump();
@@ -822,10 +744,12 @@ class Room {
         completed: r.completed.has(a),
       }));
       const assignedTotal = [...r.assignments.values()].filter(Boolean).length;
-      const waitingOnAway = [...r.assignments].some(([a, rev]) => rev && !r.completed.has(a)
-        && !this.players.get(rev)?.connected && this.isPresent(rev, now));
-      view.voting = { assigned: mine, completedCount: r.completed.size, total: assignedTotal, waitingOnAway,
-        closing: r.firstCompleteAt !== null, fallbackSeconds: this.settings.reviewFallback };
+      const pendingReviewers = [...r.assignments]
+        .filter(([a, rev]) => rev && !r.completed.has(a))
+        .map(([, rev]) => rev)
+        .filter((rev, i, arr) => arr.indexOf(rev) === i)
+        .map((rev) => ({ id: rev, name: this.players.get(rev)?.name || 'Player' }));
+      view.voting = { assigned: mine, completedCount: r.completed.size, total: assignedTotal, pendingReviewers };
     }
     if (r && ['challenge', 'results'].includes(this.phase)) {
       view.results = {
@@ -834,26 +758,16 @@ class Room {
           return { authorId: a, name: this.players.get(a).name, answers: { ...r.answers[a] },
             status: res.status, votes: { ...res.votes }, points: res.points };
         }),
-        challengeDeadline: r.challengeDeadline,
-        windowOpen: this.phase === 'challenge' && now < r.challengeDeadline,
-        youCanChallenge: this.phase === 'challenge' && now < r.challengeDeadline && this.canChallenge(id),
+        windowOpen: this.phase === 'challenge',
+        youCanChallenge: this.phase === 'challenge' && this.canChallenge(id),
         challenges: r.challenges.map((ch) => {
           const { up, down } = this.tally(ch);
           return { id: ch.id, authorId: ch.authorId, authorName: this.players.get(ch.authorId)?.name || 'Player',
-            category: ch.cat, answer: ch.answer, up, down, status: ch.status, deadline: ch.deadline,
+            category: ch.cat, answer: ch.answer, up, down, status: ch.status,
             canVote: ch.status === 'open' && ch.authorId !== id && this.eligibleVoters(ch).includes(id) && !ch.votes.has(id),
             youVoted: ch.votes.has(id), youDecide: ch.status === 'tie' && ch.decider === id,
             decidedBy: ch.decidedBy };
         }),
-      };
-    }
-    if (this.phase === 'pended') {
-      view.pended = {
-        assigned: this.pended.filter((i) => i.reviewer === id && !i.completed).map((i) => ({
-          id: i.id, letter: i.letter, roundNo: i.roundNo, name: this.players.get(i.authorId)?.name || 'Player',
-          answers: { ...i.answers } })),
-        remaining: this.pended.filter((i) => !i.completed).length,
-        total: this.pended.length,
       };
     }
     if (this.phase === 'final') view.final = this.final;
@@ -863,5 +777,5 @@ class Room {
 
 module.exports = {
   Room, CATEGORIES, CATEGORY_LABELS, LETTERS, LIMITS, DEFAULT_SETTINGS, FIXED,
-  MAX_WORDS, MAX_CHARS, CHALLENGES_PER_GAME, validateAnswer,
+  MAX_WORDS, MAX_CHARS, CHALLENGES_PER_GAME, validateAnswer, ROOM_SIZE_TIERS,
 };

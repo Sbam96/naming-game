@@ -1,4 +1,4 @@
-# Alphabet Challenge
+# Letter Blitz
 
 Name, Food, Animal, Place, Thing: the pen-and-paper game, played live in the browser. Built to the
 "Naming Game — Requirements v1.0" spec.

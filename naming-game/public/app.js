@@ -38,8 +38,13 @@
     settings_locked: 'Settings are locked once the game starts.',
     unknown_player: 'Your seat in this room has gone.',
   };
-  const SETTING_NAMES = { maxPlayers: 'Max players', answerTime: 'Answer time', pickTime: 'Letter pick time',
-    reviewFallback: 'Review wait', challengeTime: 'Challenge window' };
+  const SETTING_NAMES = { maxPlayers: 'Max players', answerTime: 'Answer time', pickTime: 'Letter pick time' };
+  const ROOM_SIZE_TIERS = [
+    { cap: 8, label: '1-8' },
+    { cap: 20, label: '9-20' },
+    { cap: 50, label: '21-50' },
+    { cap: 100, label: '50-100' },
+  ];
   const errText = (r) => {
     if (r.error === 'invalid_setting' && r.key) {
       return r.min !== undefined ? `${SETTING_NAMES[r.key] || r.key} must be between ${r.min} and ${r.max}.` : `${SETTING_NAMES[r.key] || r.key} isn't valid.`;
@@ -134,7 +139,6 @@
       voting: 'Time is up. Review your assigned answers.',
       challenge: 'Votes are in. You can challenge your rejected answers now.',
       results: 'Round scores are in.',
-      pended: 'Review the leftover answers before the final scores.',
       final: 'The game is over. Final leaderboard.',
     }[r.phase];
     if (msg) $('#announcer').textContent = msg;
@@ -216,17 +220,17 @@
   const letterColour = (L) => TILE_COLOURS[(L.charCodeAt(0) - 65) % 5];
 
   function renderHome() {
-    const word = [...'ALPHABET'].map((L, i) => `<span class="tile hero-tile ${TILE_COLOURS[i % 5]}" style="--i:${i}">${L}</span>`).join('');
+    const word = [...'LETTER'].map((L, i) => `<span class="tile hero-tile ${TILE_COLOURS[i % 5]}" style="--i:${i}">${L}</span>`).join('');
     const steps = [
       ['Make a room', 'Create a room and send the link, code or QR code to your friends. You need at least 2 players.'],
       ['Pick a letter', 'Players take turns choosing the letter. Each letter can only be played once per game.'],
       ['Beat the clock', 'Write a Name, Food, Animal, Place and Thing starting with that letter before the timer runs out. Up to 3 words each.'],
       ['Judge a friend', "You're given one other player's answers. Thumbs up if it counts, thumbs down if it doesn't."],
-      ['Challenge it', 'Think a thumbs down was unfair? Challenge it and the whole group votes. You get 4 challenges a game.'],
+      ['Challenge it', 'Think a thumbs down was unfair? Challenge it and the whole group votes. You get 7 challenges a game.'],
       ['Win', 'Every thumbs up is a point. Whoever has the most after 26 letters, or when the host ends the game, wins.'],
     ];
     return `
-      <h1 class="hero" aria-label="Alphabet Challenge"><span class="hero-word" aria-hidden="true">${word}</span><span class="hero-sub" aria-hidden="true">Challenge</span></h1>
+      <h1 class="hero" aria-label="Letter Blitz"><span class="hero-word" aria-hidden="true">${word}</span><span class="hero-sub" aria-hidden="true">Blitz</span></h1>
       <p class="lede">Pick a letter. Beat the clock. Let your friends be the judge.</p>
       <div class="cat-strip" aria-hidden="true">${CATS.map((c) => `<span class="chip chip-${c}">${LABEL[c]}</span>`).join('')}</div>
       ${nameField()}
@@ -293,9 +297,9 @@
     const r = v.room;
     const body = {
       lobby: renderLobby, picking: renderPicking, answering: renderAnswering, voting: renderVoting,
-      challenge: renderResults, results: renderRoundScores, pended: renderPended, final: renderFinal,
+      challenge: renderResults, results: renderRoundScores, final: renderFinal,
     }[r.phase](v);
-    const hostBar = v.you?.isHost && !['lobby', 'final', 'pended'].includes(r.phase)
+    const hostBar = v.you?.isHost && !['lobby', 'final'].includes(r.phase)
       ? '<button class="btn warn small" data-action="end-game">End game</button>' : '';
     const settings = r.phase === 'lobby' ? '' : `
       <details class="field"><summary>Game settings</summary>${settingsForm(v, true)}</details>`;
@@ -311,6 +315,12 @@
       <div class="field"><label for="set-${key}">${label}${unit ? ` (${unit})` : ''}</label>
       <input id="set-${key}" type="number" inputmode="numeric" min="${lim[key][0]}" max="${lim[key][1]}" value="${s[key]}" ${dis}>
       <p class="hint">${lim[key][0]} to ${lim[key][1]}</p></div>`;
+    const currentTier = ROOM_SIZE_TIERS.find((t) => t.cap >= s.maxPlayers) || ROOM_SIZE_TIERS[ROOM_SIZE_TIERS.length - 1];
+    const roomSizeField = `
+      <fieldset><legend>Room size</legend>
+        ${ROOM_SIZE_TIERS.map((t) => `
+          <label class="radio"><input type="radio" name="maxPlayers" value="${t.cap}" ${t.cap === currentTier.cap ? 'checked' : ''} ${dis}> ${t.label} players</label>`).join('')}
+      </fieldset>`;
     return `
       <form id="settingsForm" onsubmit="return false">
         <div class="field"><label for="set-roomName">Room name</label>
@@ -319,11 +329,9 @@
           <label class="radio"><input type="radio" name="visibility" value="private" ${v.room.visibility === 'private' ? 'checked' : ''} ${dis}> Private (link or code only)</label>
           <label class="radio"><input type="radio" name="visibility" value="public" ${v.room.visibility === 'public' ? 'checked' : ''} ${dis}> Public (listed in public rooms)</label>
         </fieldset>
-        ${num('maxPlayers', 'Max players')}
+        ${roomSizeField}
         ${num('answerTime', 'Answer time', 'seconds')}
         ${num('pickTime', 'Letter pick time', 'seconds')}
-        ${num('reviewFallback', 'Review wait after first voter', 'seconds')}
-        ${num('challengeTime', 'Challenge window', 'seconds')}
         ${locked ? '<p class="muted small">Settings are locked once the game starts.</p>' : '<button class="btn ghost" type="button" data-action="save-settings">Save settings</button>'}
       </form>`;
   }
@@ -341,8 +349,6 @@
         <li><span>Visibility</span><span>${r.visibility === 'public' ? 'Public' : 'Private'}</span></li>
         <li><span>Answer time</span><span>${s.answerTime}s</span></li>
         <li><span>Letter pick</span><span>${s.pickTime}s</span></li>
-        <li><span>Review wait</span><span>${s.reviewFallback}s</span></li>
-        <li><span>Challenge window</span><span>${s.challengeTime}s</span></li>
       </ul>`;
     return `
       <h1>${esc(r.name)}</h1>
@@ -408,19 +414,18 @@
       <div class="row"><button class="btn" data-action="toggle-done" aria-pressed="${a.done}">${a.done ? 'Keep editing' : "I'm done"}</button></div>`;
   }
 
-  function reviewSet(set, key, letter) {
+  function reviewSet(set, key) {
     const chosen = S.votes[key] || {};
     const rows = CATS.map((c) => {
       const ans = set.answers[c];
       if (!ans) return `<div class="review-row"><span class="cat chip chip-${c}">${LABEL[c]}</span><span class="ans muted">No answer</span><span class="muted small">0 points</span></div>`;
       return `<div class="review-row"><span class="cat chip chip-${c}">${LABEL[c]}</span><span class="ans">${esc(ans)}</span>
         <span class="thumbs">
-          <button class="thumb up" data-action="vote" data-key="${key}" data-cat="${c}" data-up="1" aria-pressed="${chosen[c] === true}" aria-label="Accept ${esc(ans)} for ${LABEL[c]}">👍</button>
-          <button class="thumb down" data-action="vote" data-key="${key}" data-cat="${c}" data-up="0" aria-pressed="${chosen[c] === false}" aria-label="Reject ${esc(ans)} for ${LABEL[c]}">👎</button>
+          <button class="thumb up" data-action="vote" data-key="${key}" data-author="${set.authorId}" data-cat="${c}" data-up="1" aria-pressed="${chosen[c] === true}" aria-label="Accept ${esc(ans)} for ${LABEL[c]}">👍</button>
+          <button class="thumb down" data-action="vote" data-key="${key}" data-author="${set.authorId}" data-cat="${c}" data-up="0" aria-pressed="${chosen[c] === false}" aria-label="Reject ${esc(ans)} for ${LABEL[c]}">👎</button>
         </span></div>`;
     }).join('');
-    const complete = CATS.every((c) => !set.answers[c] || typeof chosen[c] === 'boolean');
-    return { rows, complete };
+    return { rows };
   }
 
   function renderVoting(v) {
@@ -431,17 +436,15 @@
       if (s.completed && blank(s)) return `<h2>${esc(s.name)}'s answers</h2><p>${esc(s.name)} didn't write any answers this round, so there's nothing for you to review. They score 0.</p>`;
       if (s.completed) return `<h2>${esc(s.name)}'s answers</h2><p>Votes in. Thanks.</p>`;
       const key = `r${r.roundNo}:${s.authorId}`;
-      const { rows, complete } = reviewSet(s, key, r.letter);
-      return `<section aria-labelledby="h-${s.authorId}"><h2 id="h-${s.authorId}">${esc(s.name)}'s answers</h2>${rows}
-        <div class="row"><button class="btn" data-action="submit-votes" data-author="${s.authorId}" data-key="${key}" ${complete ? '' : 'disabled'}>Submit votes</button></div></section>`;
+      const { rows } = reviewSet(s, key);
+      return `<section aria-labelledby="h-${s.authorId}"><h2 id="h-${s.authorId}">${esc(s.name)}'s answers</h2>${rows}</section>`;
     }).join('');
+    const pending = v.voting.pendingReviewers || [];
     return `
-      <div class="status"><h1>Review</h1>${v.voting.closing ? '<span class="muted">Closes in</span> <span class="timer" id="timer" role="timer" aria-label="Seconds left"></span>' : ''}</div>
-      ${v.voting.closing ? '' : `<p class="muted small">Voting closes ${v.voting.fallbackSeconds} seconds after the first player submits.</p>`}
-      <p class="muted">Letter ${r.letter}. Give a thumbs up if the answer fits the category and starts with ${r.letter}.</p>
+      <div class="status"><h1>Review</h1></div>
+      <p class="muted">Letter ${r.letter}. Give a thumbs up if the answer fits the category and starts with ${r.letter}. Your vote is saved as soon as you tap.</p>
       ${blocks || '<p>Nothing for you to review this round.</p>'}
-      ${v.voting.waitingOnAway ? '<p><strong>A player has lost connection. Waiting up to 45 seconds for them to come back and review.</strong></p>'
-        : sets.every((x) => x.completed) ? '<p><strong>Waiting for the other players to finish reviewing.</strong></p>' : ''}
+      ${pending.length ? `<p><strong>Still marking: ${esc(joinNames(pending.map((p) => p.name)))}.</strong></p>` : ''}
       <p class="muted">${v.voting.completedCount} of ${v.voting.total} answer sets reviewed.</p>`;
   }
 
@@ -451,7 +454,7 @@
     const rows = res.sets.map((s) => {
       const cells = CATS.map((c) => {
         const ans = s.answers[c];
-        if (s.status === 'pended') return `<td class="blank">${ans ? `${esc(ans)}<br><span class="small">Pending review</span>` : 'No answer'}</td>`;
+        if (s.status === 'unreviewed') return `<td class="blank">${ans ? `${esc(ans)}<br><span class="small">Not reviewed</span>` : 'No answer'}</td>`;
         if (!ans) return '<td class="blank">No answer</td>';
         const yes = s.votes[c] === true;
         const canChallenge = allowChallenge && s.authorId === v.you.id && !yes && res.windowOpen
@@ -459,7 +462,7 @@
         return `<td class="${yes ? 'yes' : 'no'}"><span class="mark" aria-label="${yes ? 'Accepted' : 'Rejected'}">${yes ? '✓' : '✗'}</span><span class="ans">${esc(ans)}</span>
           ${canChallenge ? `<br><button class="btn ghost small" data-action="challenge" data-cat="${c}" aria-label="Challenge ${esc(ans)} for ${LABEL[c]}">Challenge</button>` : ''}</td>`;
       }).join('');
-      return `<tr class="${s.authorId === v.you.id ? 'you' : ''}"><th scope="row">${esc(s.name)}</th>${cells}<td>${s.status === 'pended' ? '–' : s.points}</td></tr>`;
+      return `<tr class="${s.authorId === v.you.id ? 'you' : ''}"><th scope="row">${esc(s.name)}</th>${cells}<td>${s.status === 'unreviewed' ? '–' : s.points}</td></tr>`;
     }).join('');
     return `<div class="scroll-x" tabindex="0" role="region" aria-label="Round answers"><table>
       <thead><tr><th scope="col">Player</th>${CATS.map((c) => `<th scope="col">${LABEL[c]}</th>`).join('')}<th scope="col">Points</th></tr></thead>
@@ -482,14 +485,15 @@
         <p class="small" style="margin:0">${c.up} up, ${c.down} down. ${status}.</p>${buttons}</div>`;
     }).join('');
     return `
-      <div class="status"><h1>Round ${r.roundNo}: ${esc(r.letter)}</h1><span class="timer" id="timer" role="timer" aria-label="Seconds left"></span></div>
-      <p class="muted">${!res.windowOpen ? 'The challenge window has closed.'
-        : res.youCanChallenge ? `Think a thumbs down was wrong? Challenge it. You have ${v.you.challengesLeft} of 4 challenges left this game.`
-          : v.you.challengesLeft > 0 ? "You've nothing to challenge this round. Waiting for the others to decide."
-            : "You've used all 4 challenges this game. Waiting for the others to decide."}</p>
+      <div class="status"><h1>Round ${r.roundNo}: ${esc(r.letter)}</h1></div>
+      <p class="muted">${res.youCanChallenge ? `Think a thumbs down was wrong? Challenge it. You have ${v.you.challengesLeft} of 7 challenges left this game.`
+        : v.you.challengesLeft > 0 ? "You've nothing to challenge this round. Waiting for the host to move on."
+          : "You've used all 7 challenges this game. Waiting for the host to move on."}</p>
       ${resultsTable(v, true)}
       <h2>Challenges</h2>
-      ${chal || '<p class="muted">No challenges yet.</p>'}`;
+      ${chal || '<p class="muted">No challenges yet.</p>'}
+      ${v.you.isHost ? '<div class="row"><button class="btn" data-action="next-round">Move on</button></div>'
+        : '<p class="muted">Waiting for the host to move on.</p>'}`;
   }
 
   const boardList = (v, winners = []) => `<ol class="leader">${v.leaderboard.map((p) => `
@@ -505,20 +509,6 @@
       <h2>Leaderboard</h2>
       ${boardList(v)}
       <p class="muted">Next letter in <span class="timer" id="timer" role="timer"></span></p>`;
-  }
-
-  function renderPended(v) {
-    const p = v.pended;
-    const blocks = p.assigned.map((s) => {
-      const key = `p:${s.id}`;
-      const { rows, complete } = reviewSet(s, key, s.letter);
-      return `<section><h2>${esc(s.name)}'s answers for ${esc(s.letter)}</h2>${rows}
-        <div class="row"><button class="btn" data-action="submit-pended" data-item="${s.id}" data-key="${key}" ${complete ? '' : 'disabled'}>Submit votes</button></div></section>`;
-    }).join('');
-    return `
-      <div class="status"><h1>Leftover answers</h1><span class="timer" id="timer" role="timer" aria-label="Seconds left"></span></div>
-      <p class="muted">Some answers weren't reviewed during the game. They're scored now, before the final leaderboard.</p>
-      ${blocks || `<p>Waiting for others to finish (${p.remaining} of ${p.total} left).</p>`}`;
   }
 
   function renderFinal(v) {
@@ -611,7 +601,7 @@
     },
     'share-link': async () => {
       if (navigator.share) {
-        try { await navigator.share({ title: 'Join my Alphabet Challenge', text: `Room ${S.view.room.code}`, url: roomLink() }); } catch { /* dismissed */ }
+        try { await navigator.share({ title: 'Join my Letter Blitz', text: `Room ${S.view.room.code}`, url: roomLink() }); } catch { /* dismissed */ }
       } else {
         handlers['copy-link']();
       }
@@ -624,22 +614,24 @@
     kick: (el) => act('kick', { playerId: el.dataset.id }),
     'save-settings': () => {
       const patch = { roomName: $('#set-roomName').value, visibility: document.querySelector('input[name=visibility]:checked')?.value };
-      for (const k of ['maxPlayers', 'answerTime', 'pickTime', 'reviewFallback', 'challengeTime']) patch[k] = Number($(`#set-${k}`).value);
+      patch.maxPlayers = Number(document.querySelector('input[name=maxPlayers]:checked')?.value);
+      for (const k of ['answerTime', 'pickTime']) patch[k] = Number($(`#set-${k}`).value);
       act('settings', { patch }).then((r) => { if (r.ok) toast('Settings saved'); });
     },
     start: () => act('start'),
     pick: (el) => act('pick', { letter: el.dataset.letter }),
     'toggle-done': () => act('done', { done: !S.view.answering.done }),
     vote: (el) => {
-      const { key, cat } = el.dataset;
-      S.votes[key] = { ...(S.votes[key] || {}), [cat]: el.dataset.up === '1' };
+      const { key, cat, author } = el.dataset;
+      const up = el.dataset.up === '1';
+      S.votes[key] = { ...(S.votes[key] || {}), [cat]: up };
       render();
+      act('vote', { authorId: author, category: cat, up });
     },
-    'submit-votes': (el) => act('votes', { authorId: el.dataset.author, votes: S.votes[el.dataset.key] || {} }),
-    'submit-pended': (el) => act('pendedVotes', { itemId: el.dataset.item, votes: S.votes[el.dataset.key] || {} }),
     challenge: (el) => act('challenge', { category: el.dataset.cat }),
     'challenge-vote': (el) => act('challengeVote', { challengeId: el.dataset.id, up: el.dataset.up === '1' }),
     'decide-tie': (el) => act('decideTie', { challengeId: el.dataset.id, up: el.dataset.up === '1' }),
+    'next-round': () => act('nextRound'),
     'end-game': () => { if (confirm('End the game now for everyone?')) act('end'); },
     'play-again': () => act('playAgain'),
     restart: () => {
