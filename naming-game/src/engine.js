@@ -647,6 +647,7 @@ class Room {
   voteFinalReview(id, authorId, category, up, now) {
     if (this.phase !== 'finalReview') return fail('wrong_phase');
     if (!this.players.has(id)) return fail('unknown_player');
+    if (!this.isPresent(id, now)) return fail('not_present');
     if (id === authorId) return fail('cannot_review_own');
     if (!CATEGORIES.includes(category)) return fail('invalid_category');
     const item = this.unresolvedReviews.find((i) => i.authorId === authorId && !i.completed);

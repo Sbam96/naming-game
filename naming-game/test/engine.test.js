@@ -806,6 +806,22 @@ test('GP-10 a genuinely abandoned answer set is reviewed at the end of the game 
   assert.equal(c2.room.phase, 'final');
 });
 
+test('GP-10b only connected players can vote in the end-of-game review', () => {
+  const ctx = setup(2);
+  const { unreviewedAuthor, lazyReviewer } = leaveOneUnreviewed(ctx);
+  ctx.adv(3);
+  ctx.room.endGame(ctx.host, ctx.now);
+  assert.equal(ctx.room.phase, 'finalReview');
+  // lazyReviewer is still disconnected at this point (never rejoined)
+  assert.equal(ctx.room.voteFinalReview(lazyReviewer, unreviewedAuthor, 'name', true, ctx.now).error, 'not_present');
+  ctx.room.rejoin(ctx.p(lazyReviewer).token, ctx.now);
+  const item = ctx.room.unresolvedReviews[0];
+  for (const c of CATEGORIES) {
+    if (item.answers[c]) assert.equal(ctx.room.voteFinalReview(lazyReviewer, unreviewedAuthor, c, true, ctx.now).ok, true);
+  }
+  assert.equal(ctx.room.phase, 'final');
+});
+
 test('GP-11 restarting after 26 letters refreshes letters, zeroes scores and resets challenges', () => {
   const ctx = setup(2);
   for (const L of LETTERS) playFullRound(ctx, () => true, L);
