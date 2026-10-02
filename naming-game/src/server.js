@@ -143,6 +143,7 @@ function createServer({ port = process.env.PORT || 3000, tickMs = 200, testHooks
         case 'challengeVote': res = room.voteChallenge(id, msg.challengeId, msg.up, now); break;
         case 'decideTie': res = room.decideTie(id, msg.challengeId, msg.up, now); break;
         case 'nextRound': res = room.nextRound(id, now); break;
+        case 'finalReviewVote': res = room.voteFinalReview(id, msg.authorId, msg.category, !!msg.up, now); break;
         case 'end': res = room.endGame(id, now); break;
         case 'restart': res = room.restart(id, now); break;
         case 'playAgain': res = room.playAgain(id, now); break;

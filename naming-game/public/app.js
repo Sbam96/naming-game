@@ -37,6 +37,7 @@
     incomplete_votes: 'Vote on every answer first.',
     settings_locked: 'Settings are locked once the game starts.',
     unknown_player: 'Your seat in this room has gone.',
+    cannot_review_own: "You can't review your own answers.",
   };
   const SETTING_NAMES = { maxPlayers: 'Max players', answerTime: 'Answer time', pickTime: 'Letter pick time' };
   const ROOM_SIZE_TIERS = [
@@ -139,6 +140,7 @@
       voting: 'Time is up. Review your assigned answers.',
       challenge: 'Votes are in. You can challenge your rejected answers now.',
       results: 'Round scores are in.',
+      finalReview: 'A few answers never got reviewed. Help mark them before the final scores.',
       final: 'The game is over. Final leaderboard.',
     }[r.phase];
     if (msg) $('#announcer').textContent = msg;
@@ -297,7 +299,7 @@
     const r = v.room;
     const body = {
       lobby: renderLobby, picking: renderPicking, answering: renderAnswering, voting: renderVoting,
-      challenge: renderResults, results: renderRoundScores, final: renderFinal,
+      challenge: renderResults, results: renderRoundScores, finalReview: renderFinalReview, final: renderFinal,
     }[r.phase](v);
     const hostBar = v.you?.isHost && !['lobby', 'final'].includes(r.phase)
       ? '<button class="btn warn small" data-action="end-game">End game</button>' : '';
@@ -414,15 +416,15 @@
       <div class="row"><button class="btn" data-action="toggle-done" aria-pressed="${a.done}">${a.done ? 'Keep editing' : "I'm done"}</button></div>`;
   }
 
-  function reviewSet(set, key) {
+  function reviewSet(set, key, actionName = 'vote') {
     const chosen = S.votes[key] || {};
     const rows = CATS.map((c) => {
       const ans = set.answers[c];
       if (!ans) return `<div class="review-row"><span class="cat chip chip-${c}">${LABEL[c]}</span><span class="ans muted">No answer</span><span class="muted small">0 points</span></div>`;
       return `<div class="review-row"><span class="cat chip chip-${c}">${LABEL[c]}</span><span class="ans">${esc(ans)}</span>
         <span class="thumbs">
-          <button class="thumb up" data-action="vote" data-key="${key}" data-author="${set.authorId}" data-cat="${c}" data-up="1" aria-pressed="${chosen[c] === true}" aria-label="Accept ${esc(ans)} for ${LABEL[c]}">👍</button>
-          <button class="thumb down" data-action="vote" data-key="${key}" data-author="${set.authorId}" data-cat="${c}" data-up="0" aria-pressed="${chosen[c] === false}" aria-label="Reject ${esc(ans)} for ${LABEL[c]}">👎</button>
+          <button class="thumb up" data-action="${actionName}" data-key="${key}" data-author="${set.authorId}" data-cat="${c}" data-up="1" aria-pressed="${chosen[c] === true}" aria-label="Accept ${esc(ans)} for ${LABEL[c]}">👍</button>
+          <button class="thumb down" data-action="${actionName}" data-key="${key}" data-author="${set.authorId}" data-cat="${c}" data-up="0" aria-pressed="${chosen[c] === false}" aria-label="Reject ${esc(ans)} for ${LABEL[c]}">👎</button>
         </span></div>`;
     }).join('');
     return { rows };
@@ -509,6 +511,20 @@
       <h2>Leaderboard</h2>
       ${boardList(v)}
       <p class="muted">Next letter in <span class="timer" id="timer" role="timer"></span></p>`;
+  }
+
+  function renderFinalReview(v) {
+    const fr = v.finalReview;
+    const blocks = fr.items.map((i) => {
+      const key = `fr:${i.authorId}`;
+      const { rows } = reviewSet(i, key, 'final-review-vote');
+      return `<section aria-labelledby="h-${i.authorId}"><h2 id="h-${i.authorId}">${esc(i.name)}'s answers for ${esc(i.letter)}</h2>${rows}</section>`;
+    }).join('');
+    return `
+      <div class="status"><h1>Leftover answers</h1></div>
+      <p class="muted">A few answers never got reviewed during the game because nobody was around at the time. Mark them now, before the final scores — anyone can review any of them.</p>
+      ${blocks || '<p>Nothing left for you to review.</p>'}
+      <p class="muted">${fr.total - fr.remaining} of ${fr.total} reviewed.</p>`;
   }
 
   function renderFinal(v) {
@@ -627,6 +643,13 @@
       S.votes[key] = { ...(S.votes[key] || {}), [cat]: up };
       render();
       act('vote', { authorId: author, category: cat, up });
+    },
+    'final-review-vote': (el) => {
+      const { key, cat, author } = el.dataset;
+      const up = el.dataset.up === '1';
+      S.votes[key] = { ...(S.votes[key] || {}), [cat]: up };
+      render();
+      act('finalReviewVote', { authorId: author, category: cat, up });
     },
     challenge: (el) => act('challenge', { category: el.dataset.cat }),
     'challenge-vote': (el) => act('challengeVote', { challengeId: el.dataset.id, up: el.dataset.up === '1' }),

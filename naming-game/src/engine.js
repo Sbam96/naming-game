@@ -23,7 +23,7 @@ const DEFAULT_SETTINGS = { maxPlayers: 8, answerTime: 50, pickTime: 20 };
 // Voting and the challenge step no longer force-close on a clock: voting waits for every
 // present reviewer to finish, and once there's a challenge the host decides when to move on.
 const FIXED = {
-  resultsTime: 8,        // round results + leaderboard screen
+  resultsTime: 3,        // round results + leaderboard screen
   hostGrace: 20,         // host disconnected this long -> role passes on
   reviewerGrace: 45,     // a reviewer whose connection drops keeps their review this long (phones sleep)
   emptyGrace: 60,        // everyone disconnected this long -> room closes
@@ -75,6 +75,10 @@ class Room {
     this.deadline = null;
     this.pickerId = null;
     this.lastRoundPoints = null;
+    // Answer sets nobody was present to review during their own round (rare: only when a
+    // reviewer drops and there's nobody left to reassign to). Reviewed by anyone still
+    // around once the game is ending, instead of just scoring 0 silently.
+    this.unresolvedReviews = [];
     for (const p of this.players.values()) {
       p.score = 0;
       p.challengesLeft = CHALLENGES_PER_GAME;
@@ -449,6 +453,10 @@ class Room {
       } else {
         r.results.set(a, { status: 'unreviewed', votes: {}, points: 0 });
         pts[a] = 0;
+        this.unresolvedReviews.push({
+          authorId: a, roundNo: r.no, letter: r.letter, answers: { ...r.answers[a] },
+          votes: {}, completed: false, points: 0,
+        });
       }
     }
     for (const p of this.players.values()) if (!(p.id in pts)) pts[p.id] = 0; // missed round (GP-12)
@@ -570,8 +578,20 @@ class Room {
   nextRound(id, now) {
     if (!this.isHost(id)) return fail('not_host');
     if (this.phase !== 'challenge') return fail('wrong_phase');
-    for (const ch of this.round.challenges) {
-      if (ch.status === 'open' || ch.status === 'tie') this.resolveChallenge(ch, false, 'host_advanced');
+    const r = this.round;
+    // Resolve every still-open challenge by whatever votes have been cast so far; an exact
+    // tie (including nobody having voted at all) goes to the host to decide, same as a
+    // natural mid-round tie, rather than auto-failing it.
+    for (const ch of r.challenges) {
+      if (ch.status !== 'open') continue;
+      const { up, down } = this.tally(ch);
+      if (up > down) this.resolveChallenge(ch, true, 'host_advanced');
+      else if (down > up) this.resolveChallenge(ch, false, 'host_advanced');
+      else { ch.status = 'tie'; ch.decider = id; }
+    }
+    if (r.challenges.some((c) => c.status === 'tie')) {
+      this.bump();
+      return ok({ tiesPending: true }); // host must decide the tie(s) before the round can advance
     }
     this.beginResults(now);
     this.bump();
@@ -598,7 +618,12 @@ class Room {
     if (this.phase === 'challenge') {
       for (const ch of this.round.challenges) if (ch.status === 'open' || ch.status === 'tie') this.resolveChallenge(ch, false, 'ended');
     }
-    this.finishGame(now, 'host');
+    if (this.phase === 'finalReview') {
+      // Ending early from the leftover-review phase: whatever's still unreviewed just stays at 0.
+      this.goFinal(now);
+    } else {
+      this.finishGame(now, 'host');
+    }
     this.bump();
     return ok();
   }
@@ -607,7 +632,42 @@ class Room {
     this.gameEndReason = reason;
     this.round = null;
     this.pickerId = null;
-    this.goFinal(now);
+    if (this.unresolvedReviews.some((i) => !i.completed)) this.beginFinalReview(now);
+    else this.goFinal(now);
+  }
+
+  // ---------- end-of-game review of genuinely abandoned answer sets ----------
+  beginFinalReview(now) {
+    this.phase = 'finalReview';
+    this.deadline = null;
+  }
+
+  // Anyone present (other than the author) can review a leftover set, one category at a time,
+  // first-come-first-served — there's no assigned reviewer here, unlike mid-game voting.
+  voteFinalReview(id, authorId, category, up, now) {
+    if (this.phase !== 'finalReview') return fail('wrong_phase');
+    if (!this.players.has(id)) return fail('unknown_player');
+    if (id === authorId) return fail('cannot_review_own');
+    if (!CATEGORIES.includes(category)) return fail('invalid_category');
+    const item = this.unresolvedReviews.find((i) => i.authorId === authorId && !i.completed);
+    if (!item) return fail('already_voted');
+    if (!item.answers[category]) return fail('blank_answer');
+    item.votes[category] = !!up;
+    const allVoted = CATEGORIES.every((c) => !item.answers[c] || typeof item.votes[c] === 'boolean');
+    if (allVoted) {
+      item.completed = true;
+      item.points = Object.values(item.votes).filter(Boolean).length;
+      const p = this.players.get(authorId);
+      if (p) { p.score += item.points; this.addThumbs(authorId, item.points); }
+      this.checkFinalReviewComplete(now);
+    }
+    this.bump();
+    return ok();
+  }
+
+  checkFinalReviewComplete(now) {
+    if (this.phase !== 'finalReview') return;
+    if (this.unresolvedReviews.every((i) => i.completed)) this.goFinal(now);
   }
 
   leaderboard() {
@@ -768,6 +828,17 @@ class Room {
             youVoted: ch.votes.has(id), youDecide: ch.status === 'tie' && ch.decider === id,
             decidedBy: ch.decidedBy };
         }),
+      };
+    }
+    if (this.phase === 'finalReview') {
+      const open = this.unresolvedReviews.filter((i) => !i.completed);
+      view.finalReview = {
+        items: open.filter((i) => i.authorId !== id).map((i) => ({
+          authorId: i.authorId, name: this.players.get(i.authorId)?.name || 'Player',
+          roundNo: i.roundNo, letter: i.letter, answers: { ...i.answers }, votes: { ...i.votes },
+        })),
+        remaining: open.length,
+        total: this.unresolvedReviews.length,
       };
     }
     if (this.phase === 'final') view.final = this.final;

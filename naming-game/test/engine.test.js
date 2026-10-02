@@ -54,7 +54,7 @@ function finishRound(ctx) {
   // challenge phase (skipped when nobody can challenge) -> host moves on -> results -> next picking
   if (ctx.room.phase === 'challenge') assert.equal(ctx.room.nextRound(ctx.host, ctx.now).ok, true);
   assert.equal(ctx.room.phase, 'results');
-  ctx.adv(8);
+  ctx.adv(3);
 }
 function playFullRound(ctx, decide, letter, answersFor) {
   const L = playToVoting(ctx, letter, answersFor);
@@ -497,6 +497,55 @@ test('RV-12 a tied vote goes to the host; if the host challenged, the next-in-li
   assert.equal(ch2.decider, ctx.ids[1]); // longest-joined after the host
 });
 
+test('RV-17 the host moving on resolves open challenges by their vote tally so far', () => {
+  const ctx = setup(4);
+  playToVoting(ctx);
+  voteAll(ctx, (a, c) => !(a === ctx.host && ['name', 'food'].includes(c)));
+  const up = ctx.room.raiseChallenge(ctx.host, 'name', ctx.now).challengeId;
+  const down = ctx.room.raiseChallenge(ctx.host, 'food', ctx.now).challengeId;
+  // partial votes only - the host moves on before everyone eligible has voted
+  ctx.room.voteChallenge(ctx.ids[1], up, true, ctx.now);
+  ctx.room.voteChallenge(ctx.ids[2], up, true, ctx.now);
+  ctx.room.voteChallenge(ctx.ids[1], down, false, ctx.now);
+  const scoreBefore = ctx.p(ctx.host).score;
+  assert.equal(ctx.room.nextRound(ctx.host, ctx.now).ok, true);
+  assert.equal(ctx.room.phase, 'results');
+  const upCh = ctx.room.round.challenges.find((c) => c.id === up);
+  const downCh = ctx.room.round.challenges.find((c) => c.id === down);
+  assert.equal(upCh.status, 'won'); // 2 up, 0 down so far
+  assert.equal(downCh.status, 'lost'); // 0 up, 1 down so far
+  assert.equal(ctx.p(ctx.host).score, scoreBefore + 1); // only the upheld challenge scores
+});
+
+test('RV-18 an exact tie (including nobody having voted) goes to the host to decide, and blocks moving on', () => {
+  const ctx = setup(4);
+  playToVoting(ctx);
+  voteAll(ctx, (a, c) => !(a === ctx.host && ['name', 'food'].includes(c)));
+  const tied = ctx.room.raiseChallenge(ctx.host, 'name', ctx.now).challengeId;
+  const untouched = ctx.room.raiseChallenge(ctx.host, 'food', ctx.now).challengeId; // nobody votes on this one at all
+  ctx.room.voteChallenge(ctx.ids[1], tied, true, ctx.now);
+  ctx.room.voteChallenge(ctx.ids[2], tied, false, ctx.now);
+  const res1 = ctx.room.nextRound(ctx.host, ctx.now);
+  assert.equal(res1.ok, true);
+  assert.equal(res1.tiesPending, true);
+  assert.equal(ctx.room.phase, 'challenge'); // did not advance - ties are unresolved
+  const tiedCh = ctx.room.round.challenges.find((c) => c.id === tied);
+  const untouchedCh = ctx.room.round.challenges.find((c) => c.id === untouched);
+  assert.equal(tiedCh.status, 'tie');
+  assert.equal(tiedCh.decider, ctx.host); // the host decides, not a random/next-in-line player
+  assert.equal(untouchedCh.status, 'tie'); // 0-0 counts as a tie too
+  assert.equal(untouchedCh.decider, ctx.host);
+  // a non-decider (there is none here but guard the view anyway) can't act; the host can
+  assert.equal(ctx.room.decideTie(ctx.ids[1], tied, true, ctx.now).error, 'not_decider');
+  assert.equal(ctx.room.viewFor(ctx.host, ctx.now).results.challenges.find((c) => c.id === tied).youDecide, true);
+  assert.equal(ctx.room.viewFor(ctx.ids[1], ctx.now).results.challenges.find((c) => c.id === tied).youDecide, false);
+  assert.equal(ctx.room.decideTie(ctx.host, tied, true, ctx.now).ok, true);
+  assert.equal(ctx.room.decideTie(ctx.host, untouched, false, ctx.now).ok, true);
+  // now that both ties are resolved, moving on proceeds
+  assert.equal(ctx.room.nextRound(ctx.host, ctx.now).ok, true);
+  assert.equal(ctx.room.phase, 'results');
+});
+
 test('RV-13 raising a challenge after the author has no more rejected answers fails', () => {
   const ctx = setup(2);
   playToVoting(ctx);
@@ -532,13 +581,15 @@ test('SC-02 blank, rejected and lost-challenge answers score 0', () => {
   assert.equal(ctx.p(ctx.host).score, 2); // place + thing only
 });
 
-test('SC-03 an unreviewed answer set scores 0 and shows that score on the final leaderboard', () => {
+test('SC-03 an unreviewed answer set stays at 0 if nobody reviews it before the host ends early', () => {
   const ctx = setup(2);
   const { unreviewedAuthor } = leaveOneUnreviewed(ctx);
   const before = ctx.p(unreviewedAuthor).score;
   assert.equal(ctx.room.phase, 'results');
-  ctx.adv(8);
-  ctx.room.endGame(ctx.host, ctx.now);
+  ctx.adv(3);
+  ctx.room.endGame(ctx.host, ctx.now); // -> finalReview, since there's a genuinely-abandoned set
+  assert.equal(ctx.room.phase, 'finalReview');
+  ctx.room.endGame(ctx.host, ctx.now); // host ends early, leaving it unreviewed
   assert.equal(ctx.room.phase, 'final');
   assert.equal(ctx.p(unreviewedAuthor).score, before);
   assert.equal(ctx.room.final.leaderboard.find((l) => l.id === unreviewedAuthor).score, before);
@@ -686,7 +737,7 @@ test('GP-06 no ready vote: the game moves on once voting is done and the host mo
   assert.equal(ctx.room.phase, 'challenge');
   assert.equal(ctx.room.nextRound(ctx.host, ctx.now).ok, true);
   assert.equal(ctx.room.phase, 'results');
-  ctx.adv(8);
+  ctx.adv(3);
   assert.equal(ctx.room.phase, 'picking');
 });
 
@@ -729,13 +780,26 @@ test('GP-09 the game ends after 26 letters, or when the host ends it', () => {
   assert.equal(c2.room.final.alphabetComplete, false);
 });
 
-test('GP-10 the game ends straight to final even with an unreviewed answer set; there is no separate pended phase', () => {
+test('GP-10 a genuinely abandoned answer set is reviewed at the end of the game before the final leaderboard', () => {
   const ctx = setup(2);
-  leaveOneUnreviewed(ctx);
+  const { unreviewedAuthor, lazyReviewer } = leaveOneUnreviewed(ctx);
+  const before = ctx.p(unreviewedAuthor).score;
   assert.equal(ctx.room.phase, 'results');
-  ctx.adv(8);
+  ctx.adv(3);
   ctx.room.endGame(ctx.host, ctx.now);
+  assert.equal(ctx.room.phase, 'finalReview');
+  assert.equal(ctx.room.unresolvedReviews.length, 1);
+  const item = ctx.room.unresolvedReviews[0];
+  assert.equal(item.authorId, unreviewedAuthor);
+  ctx.room.rejoin(ctx.p(lazyReviewer).token, ctx.now); // the lazy reviewer comes back to help mark leftovers
+  assert.equal(ctx.room.voteFinalReview(unreviewedAuthor, unreviewedAuthor, 'name', true, ctx.now).error, 'cannot_review_own');
+  for (const c of CATEGORIES) {
+    if (item.answers[c]) assert.equal(ctx.room.voteFinalReview(lazyReviewer, unreviewedAuthor, c, true, ctx.now).ok, true);
+  }
   assert.equal(ctx.room.phase, 'final');
+  assert.equal(ctx.p(unreviewedAuthor).score, before + 5);
+
+  // skipped entirely when there's nothing left over
   const c2 = setup(2);
   playFullRound(c2);
   c2.room.endGame(c2.host, c2.now);
