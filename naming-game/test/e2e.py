@@ -412,7 +412,7 @@ async def blank_player_round(browser):
     await wait_phase(ste, 'voting')
     ste_has_votes = await ste.locator('.thumb.up').count()
     ade_text = await ade.locator('main').inner_text()
-    explains = "didn't write any answers" in ade_text and 'Waiting for the other players' in ade_text
+    explains = "didn't write any answers" in ade_text and 'Still marking' in ade_text
     await vote_all(ste)
     await wait_phase(ade, 'results')
     record('GP-06', True, 'nothing to challenge, so the round went straight to scores')
@@ -436,7 +436,7 @@ async def dropped_player_round(browser):
     await b.evaluate('window.__ngSocket.disconnect()')  # B's phone locks
     await hook(a, 'deadlineIn', ms=300)
     await wait_phase(a, 'voting')
-    await expect(a.locator('main')).to_contain_text('lost connection')
+    await expect(a.locator('main')).to_contain_text('Still marking')
     await b.evaluate('window.__ngSocket.connect()')     # B unlocks it
     await wait_phase(b, 'voting')
     await expect(b.locator('.thumb.up')).to_have_count(5)

@@ -184,6 +184,38 @@
   }, 250);
 
   // ---------- render ----------
+  // Update the live DOM in place instead of replacing it. Every broadcast used to rebuild the whole
+  // page, which swallowed taps whenever another player's vote arrived between press and release.
+  function syncAttrs(from, to) {
+    const isField = /^(INPUT|TEXTAREA|SELECT)$/.test(from.tagName);
+    for (const a of [...from.attributes]) {
+      if (!to.hasAttribute(a.name) && !(isField && (a.name === 'value' || a.name === 'checked'))) from.removeAttribute(a.name);
+    }
+    for (const a of [...to.attributes]) {
+      if (isField && (a.name === 'value' || a.name === 'checked')) continue;
+      if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+    }
+    if (isField && from.type !== 'radio' && from.type !== 'checkbox' && from.dataset.cat
+        && from !== document.activeElement && from.value !== to.getAttribute('value')) {
+      from.value = to.getAttribute('value') || ''; // answer boxes mirror S.answers; settings fields keep what the host typed
+    }
+  }
+  function morph(from, to) {
+    const a = [...from.childNodes];
+    const b = [...to.childNodes];
+    for (let i = 0; i < b.length; i++) {
+      const o = a[i];
+      const n = b[i];
+      if (!o) { from.appendChild(n); continue; }
+      if (o.nodeType !== n.nodeType || o.nodeName !== n.nodeName) { from.replaceChild(n, o); continue; }
+      if (n.nodeType === 3) { if (o.nodeValue !== n.nodeValue) o.nodeValue = n.nodeValue; continue; }
+      if (n.nodeType !== 1) continue;
+      syncAttrs(o, n);
+      morph(o, n);
+    }
+    for (let i = a.length - 1; i >= b.length; i--) from.removeChild(a[i]);
+  }
+
   function render() {
     const active = document.activeElement;
     const focusId = active && active.id;
@@ -202,7 +234,9 @@
     else if (S.screen === 'browse') html = renderBrowse();
     else if (S.screen === 'message') html = renderMessage();
     else html = renderHome();
-    app.innerHTML = html;
+    const next = document.createElement('div');
+    next.innerHTML = html;
+    morph(app, next);
 
     if (focusId) {
       const el = document.getElementById(focusId);
@@ -628,13 +662,13 @@
       $('#qrDialog').showModal();
     },
     kick: (el) => act('kick', { playerId: el.dataset.id }),
-    'save-settings': () => {
-      const patch = { roomName: $('#set-roomName').value, visibility: document.querySelector('input[name=visibility]:checked')?.value };
-      patch.maxPlayers = Number(document.querySelector('input[name=maxPlayers]:checked')?.value);
-      for (const k of ['answerTime', 'pickTime']) patch[k] = Number($(`#set-${k}`).value);
-      act('settings', { patch }).then((r) => { if (r.ok) toast('Settings saved'); });
+    'save-settings': () => saveSettings().then((r) => { if (r && r.ok) toast('Settings saved'); }),
+    start: async () => {
+      // Whatever the host has typed in the settings form counts, even if they never pressed Save.
+      const r = await saveSettings();
+      if (r && !r.ok) return;
+      act('start');
     },
-    start: () => act('start'),
     pick: (el) => act('pick', { letter: el.dataset.letter }),
     'toggle-done': () => act('done', { done: !S.view.answering.done }),
     vote: (el) => {
@@ -664,6 +698,19 @@
     'restart-confirm': () => { $('#restartDialog').close(); act('restart'); },
     'restart-cancel': () => $('#restartDialog').close(),
   };
+
+  function saveSettings() {
+    if (!$('#settingsForm') || !$('#set-answerTime')) return Promise.resolve(null);
+    const patch = { roomName: $('#set-roomName').value, visibility: document.querySelector('input[name=visibility]:checked')?.value };
+    patch.maxPlayers = Number(document.querySelector('input[name=maxPlayers]:checked')?.value);
+    for (const k of ['answerTime', 'pickTime']) patch[k] = Number($(`#set-${k}`).value);
+    return act('settings', { patch });
+  }
+
+  // Changes in the host's settings form are saved as they're made.
+  document.addEventListener('change', (e) => {
+    if (e.target.closest && e.target.closest('#settingsForm') && !e.target.disabled) saveSettings();
+  });
 
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-action]');
